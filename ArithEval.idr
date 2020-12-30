@@ -81,8 +81,53 @@ eval x = sizeRec step x
                     Nothing => x
                     (Just (y ** ySmallerX)) => f y ySmallerX
 
---covering
---eval : Term -> Term
---eval term = case oneStep term of
---              Nothing => term
---              (Just term') => eval term'
+data IsValue : Term -> Type where
+  TrueIsValue : IsValue TmTrue
+  FalseIsValue : IsValue TmFalse
+  NumIsValue : IsNumeric tm -> IsValue tm
+
+Uninhabited (IsValue (TmIf g t e)) where
+  uninhabited (NumIsValue ifIsNum) = uninhabited ifIsNum
+
+Uninhabited (IsValue (TmPred x)) where
+  uninhabited (NumIsValue predIsNum) = uninhabited predIsNum
+
+Uninhabited (IsValue (TmIszero x)) where
+  uninhabited (NumIsValue iszeroIsNum) = uninhabited iszeroIsNum
+
+isValue : (t : Term) -> Dec (IsValue t)
+isValue TmTrue = Yes TrueIsValue
+isValue TmFalse = Yes FalseIsValue
+isValue (TmIf g t e) = No uninhabited
+isValue TmZero = Yes (NumIsValue ZeroIsNumeric)
+isValue (TmSucc x) = case isNumeric x of
+                          (Yes prf) => Yes (NumIsValue (SuccIsNumeric prf))
+                          (No contra) => No (\(NumIsValue (SuccIsNumeric prf)) => contra prf)
+isValue (TmPred x) = No uninhabited
+isValue (TmIszero x) = No uninhabited
+
+export
+bigStepEval : Term -> Maybe Term
+bigStepEval t with (isValue t)
+  bigStepEval t | (Yes prf) = Just t
+  bigStepEval TmTrue | (No contra) = void $ contra TrueIsValue
+  bigStepEval TmFalse | (No contra) = void $ contra FalseIsValue
+  bigStepEval TmZero | (No contra) = void $ contra (NumIsValue ZeroIsNumeric)
+  bigStepEval (TmIf g t e) | (No _) = case bigStepEval g of
+                                           (Just TmTrue) => bigStepEval t
+                                           (Just TmFalse) => bigStepEval e
+                                           _ => Nothing
+  bigStepEval (TmSucc x) | (No _) = do xNext <- bigStepEval x
+                                       case isNumeric xNext of
+                                            (Yes _) => pure (TmSucc xNext)
+                                            (No _) => Nothing
+  bigStepEval (TmPred x) | (No _) = do xNext <- bigStepEval x
+                                       case xNext of
+                                            TmZero => pure TmZero
+                                            TmSucc num => pure num
+                                            _ => Nothing
+  bigStepEval (TmIszero x) | (No _) = do xNext <- bigStepEval x
+                                         case xNext of
+                                              TmZero => pure TmTrue
+                                              TmSucc num => pure TmFalse
+                                              _ => Nothing

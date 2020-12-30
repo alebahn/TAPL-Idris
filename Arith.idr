@@ -17,8 +17,10 @@ loop (More fuel) = do
          putStrLn ("Error " ++ error)
          loop fuel
        Right term => do
-         let norm = eval term
-         putStrLn ("Out " ++ show norm)
+         let norm = bigStepEval term
+         case norm of
+              Nothing => putStrLn "Eval Error"
+              (Just val) => putStrLn ("Out " ++ show val)
          loop fuel
 
 covering
