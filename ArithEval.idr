@@ -51,33 +51,33 @@ Sized Term where
   size (TmPred x) = S (size x)
   size (TmIszero x) = S (size x)
 
-oneStepMaybeSmaller : (tIn : Term) -> Maybe (tOut : Term ** tOut `Smaller` tIn)
-oneStepMaybeSmaller (TmIf TmTrue t e) = Just (t ** LTESucc (lteSuccRight (lteAddRight (size t))))
-oneStepMaybeSmaller (TmIf TmFalse t e) = Just (e ** LTESucc (lteSuccRight (rewrite plusZeroLeftNeutral (size t) in rewrite plusCommutative (size t) (size e) in lteAddRight (size e))))
-oneStepMaybeSmaller (TmIf g t e) = do (newGuard ** prfSmaller) <- oneStepMaybeSmaller g
-                                      pure (TmIf newGuard t e ** LTESucc (plusLteMonotoneRight (size e) (S (size newGuard + size t)) (size g + size t) (plusLteMonotoneRight (size t) (S (size newGuard)) (size g) prfSmaller)))
-oneStepMaybeSmaller (TmSucc x) with (isNumeric x)
-  oneStepMaybeSmaller (TmSucc _) | (Yes _) = Nothing
-  oneStepMaybeSmaller (TmSucc x) | (No _) = do (newX ** prfSmaller) <- oneStepMaybeSmaller x
-                                               pure (TmSucc newX ** LTESucc prfSmaller)
-oneStepMaybeSmaller (TmPred x) with (isNumeric x)
-  oneStepMaybeSmaller (TmPred TmZero) | (Yes ZeroIsNumeric) = Just (TmZero ** lteRefl)
-  oneStepMaybeSmaller (TmPred (TmSucc n)) | (Yes (SuccIsNumeric _)) = Just (n ** lteSuccRight lteRefl)
-  oneStepMaybeSmaller (TmPred x) | (No _) = do (newX ** prfSmaller) <- oneStepMaybeSmaller x
-                                               pure (TmPred newX ** LTESucc prfSmaller)
-oneStepMaybeSmaller (TmIszero x) with (isNumeric x)
-  oneStepMaybeSmaller (TmIszero TmZero) | (Yes ZeroIsNumeric) = Just (TmTrue ** lteRefl)
-  oneStepMaybeSmaller (TmIszero (TmSucc _)) | (Yes (SuccIsNumeric _)) = Just (TmFalse ** LTESucc (LTESucc LTEZero))
-  oneStepMaybeSmaller (TmIszero x) | (No _) = do (newX ** prfSmaller) <- oneStepMaybeSmaller x
-                                                 pure (TmIszero newX ** LTESucc prfSmaller)
-oneStepMaybeSmaller _ = Nothing
+oneStep : (tIn : Term) -> Maybe (tOut : Term ** tOut `Smaller` tIn)
+oneStep (TmIf TmTrue t e) = Just (t ** LTESucc (lteSuccRight (lteAddRight (size t))))
+oneStep (TmIf TmFalse t e) = Just (e ** LTESucc (lteSuccRight (rewrite plusZeroLeftNeutral (size t) in rewrite plusCommutative (size t) (size e) in lteAddRight (size e))))
+oneStep (TmIf g t e) = do (newGuard ** prfSmaller) <- oneStep g
+                          pure (TmIf newGuard t e ** LTESucc (plusLteMonotoneRight (size e) (S (size newGuard + size t)) (size g + size t) (plusLteMonotoneRight (size t) (S (size newGuard)) (size g) prfSmaller)))
+oneStep (TmSucc x) with (isNumeric x)
+  oneStep (TmSucc _) | (Yes _) = Nothing
+  oneStep (TmSucc x) | (No _) = do (newX ** prfSmaller) <- oneStep x
+                                   pure (TmSucc newX ** LTESucc prfSmaller)
+oneStep (TmPred x) with (isNumeric x)
+  oneStep (TmPred TmZero) | (Yes ZeroIsNumeric) = Just (TmZero ** lteRefl)
+  oneStep (TmPred (TmSucc n)) | (Yes (SuccIsNumeric _)) = Just (n ** lteSuccRight lteRefl)
+  oneStep (TmPred x) | (No _) = do (newX ** prfSmaller) <- oneStep x
+                                   pure (TmPred newX ** LTESucc prfSmaller)
+oneStep (TmIszero x) with (isNumeric x)
+  oneStep (TmIszero TmZero) | (Yes ZeroIsNumeric) = Just (TmTrue ** lteRefl)
+  oneStep (TmIszero (TmSucc _)) | (Yes (SuccIsNumeric _)) = Just (TmFalse ** LTESucc (LTESucc LTEZero))
+  oneStep (TmIszero x) | (No _) = do (newX ** prfSmaller) <- oneStep x
+                                     pure (TmIszero newX ** LTESucc prfSmaller)
+oneStep _ = Nothing
 
 export
 eval : Term -> Term
 eval x = sizeRec step x
   where
     step : (x : Term) -> ((y : Term) -> LTE (S (size y)) (size x) -> Term) -> Term
-    step x f = case oneStepMaybeSmaller x of
+    step x f = case oneStep x of
                     Nothing => x
                     (Just (y ** ySmallerX)) => f y ySmallerX
 
