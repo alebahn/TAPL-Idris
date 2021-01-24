@@ -1,6 +1,7 @@
 module Main
 
 import Data.Fuel
+import Data.Vect
 
 import Parser
 import Eval
@@ -15,12 +16,14 @@ loop (More fuel) = do
   case parse inputStr of
        Left error => do
          putStrLn ("Error " ++ error)
-       Right (size ** (context, term)) => do
-         case getType context term of
+       Right (0 ** ([], term)) => do
+         case getType [] term of
               Left error => putStrLn ("Type Error " ++ error)
-              Right _ => do
-                let norm = totalEval term fuel
-                putStrLn ("Out " ++ show context norm)
+              Right (_ ** hasType) => do
+                let norm = bigStepEvalTerm term hasType
+                putStrLn ("Out " ++ show [] norm)
+       Right (_ ** (_, term)) => do
+         putStrLn "Only closed terms are evaluated"
   loop fuel
 
 covering

@@ -29,7 +29,7 @@ DecEq Ty where
 public export
 data Term : Nat -> Type where
   TmVar : Fin n -> Term n
-  TmAbs : String -> Ty -> Term (S n) -> Term n
+  TmAbs : (nm : String) -> (ty : Ty )-> (body : Term (S n)) -> Term n
   TmApp : Term n -> Term n -> Term n
   TmTrue : Term n
   TmFalse : Term n
@@ -46,15 +46,15 @@ weakenTerm (TmIf g t e) lte = TmIf (weakenTerm g lte) (weakenTerm t lte) (weaken
 public export
 data Binding = NameBind | VarBind Ty
 
-export
+public export
 Context : Nat ->Type
 Context n = Vect n (String, Binding)
 
-export
+public export
 addBinding : Context n -> (name : String) -> Ty -> Context (S n)
 addBinding context name ty = (name, VarBind ty) :: context
 
-export
+public export
 getBinding : Context n -> Fin n -> Binding
 getBinding context i = snd (index i context)
 
