@@ -3,6 +3,8 @@ module ArithParser
 import Data.Strings
 import Data.Vect
 import Decidable.Equality
+import Control.WellFounded
+import Data.Nat
 
 import ArithTokens
 
@@ -27,55 +29,29 @@ Show Term where
   show (TmPred t) = "pred " ++ (show t)
   show (TmIszero t) = "iszero " ++ (show t)
 
-||| A List that is a smaller list of the given list
-data SubList : List t -> Type where
-  ||| Remove only the first element to form the SubList
-  SubTail : (tail : List t) -> SubList (head :: tail)
-  ||| Ommit an additional element from the List
-  SubLess : (sub : SubList tail) -> SubList (head :: tail)
+parseTermStep : (tokens : List Token) -> ((tokens' : List Token) -> (tokens' `Smaller` tokens) -> Either String (Term, (resid : List Token ** resid `Smaller` tokens'))) -> Either String (Term, (resid : List Token ** resid `Smaller` tokens))
+parseTermStep (TTrue :: xs) _ = Right (TmTrue, (xs ** lteRefl))
+parseTermStep (TFalse :: xs) _ = Right (TmFalse, (xs ** lteRefl))
+parseTermStep (TZero :: xs) _ = Right (TmZero, (xs ** lteRefl))
+parseTermStep (TSucc :: xs) f = do (term, (resid ** prf)) <- f xs lteRefl
+                                   pure (TmSucc term, (resid ** lteSuccRight prf))
+parseTermStep (TPred :: xs) f = do (term, (resid ** prf)) <- f xs lteRefl
+                                   pure (TmPred term, (resid ** lteSuccRight prf))
+parseTermStep (TIszero :: xs) f = do (term, (resid ** prf)) <- f xs lteRefl
+                                     pure (TmIszero term, (resid ** lteSuccRight prf))
+parseTermStep (TIf :: xs) f = do (guard, (gResid ** gPrf)) <- f xs lteRefl
+                                 (thenTerm, (tResid ** tPrf)) <- f gResid (lteSuccRight gPrf)
+                                 (elseTerm, (eResid ** ePrf)) <- f tResid (lteTransitive (lteSuccRight tPrf) (lteSuccRight gPrf))
+                                 pure (TmIf guard thenTerm elseTerm, (eResid ** (lteTransitive (lteSuccRight ePrf) (lteTransitive (lteSuccRight tPrf) (lteSuccRight gPrf)))))
+parseTermStep _ _ = Left "Invalid Term"
 
-subLessHelp : Functor f =>  f (a, SubList tail) -> f (a, SubList (head :: tail))
-subLessHelp = map (\(value, subList) => (value, SubLess subList))
-
-parseMap : Functor f => (func : a -> b) -> f (a, SubList list) -> f (b, SubList list)
-parseMap func = map (\(input, subList) => (func input, subList))
-
-parseTerm : (tokens : List Token) -> Either String (Term, SubList tokens)
-parseTerm (TTrue :: xs) = Right (TmTrue, SubTail xs)
-parseTerm (TFalse :: xs) = Right (TmFalse, SubTail xs)
-parseTerm (TZero :: xs) = Right (TmZero, SubTail xs)
-parseTerm (TSucc :: xs) = do (term, remaining) <- parseTerm xs
-                             pure (TmSucc term, SubLess remaining)
-parseTerm (TPred :: xs) = do (term, remaining) <- parseTerm xs
-                             pure (TmPred term, SubLess remaining)
-parseTerm (TIszero :: xs) = do (term, remaining) <- parseTerm xs
-                               pure (TmIszero term, SubLess remaining)
-parseTerm (TIf :: xs) = do (guard, gRemaining) <- parseTerm xs
-                           (thenTerm, tRemaining) <- lookForThen gRemaining
-                           (elseTerm, eRemaining) <- lookForElse tRemaining
-                           pure (TmIf guard thenTerm elseTerm, SubLess eRemaining)
-
-                           where
-                             lookForThen : {0 subInput : List Token} -> SubList subInput -> Either String (Term, SubList subInput)
-                             lookForThen (SubLess sub) = subLessHelp (lookForThen sub)
-                             lookForThen (SubTail (TThen :: tail)) = subLessHelp $ subLessHelp $ parseTerm tail
-                             lookForThen (SubTail _) = Left "Expected then after if guard"
-
-                             lookForElse : {0 subInput : List Token} -> SubList subInput -> Either String (Term, SubList subInput)
-                             lookForElse (SubLess sub) = subLessHelp (lookForElse sub)
-                             lookForElse (SubTail (TElse :: tail)) = subLessHelp $ subLessHelp $ parseTerm tail
-                             lookForElse (SubTail _) = Left "Expected else after then"
-parseTerm _ = Left "Invalid Term"
+parseTerm : (tokens : List Token) -> Either String Term
+parseTerm tokens = do (term, (resid ** _)) <- the (Either String (Term, (resid : List Token ** resid `Smaller` tokens))) (sizeInd parseTermStep tokens)
+                      if (length resid == 0) then pure term
+                                             else Left "Extra tokens at end of term"
 
 export
 parse : String -> Either String Term
 parse str = do
   tokens <- tokenize str
-  (term, remaining) <- parseTerm tokens
-  ensureEmpty term remaining
-  where
-    ||| count any remaining amount as a parse error
-    ensureEmpty : Term -> SubList tokens -> Either String Term
-    ensureEmpty term (SubTail []) = Right term
-    ensureEmpty term (SubLess subList) = ensureEmpty term subList
-    ensureEmpty _ _ = Left "Extra tokens at end of term"
+  parseTerm tokens
