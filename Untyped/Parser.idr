@@ -5,6 +5,7 @@ import Data.Vect
 import Decidable.Equality
 import Data.Nat
 import Control.WellFounded
+import Data.List1
 
 import Tokens
 
@@ -42,17 +43,15 @@ findInContextOrAdd name context = case elemIndex name context of
                                        (Just ind) => Right ind
 
 mutual
-  parseRecur : {n : Nat} -> (context : Context n) -> (term : Term n) -> (subTokens : List Token) -> (subTokensSmaller : subTokens `Smaller` tokens) -> (0 acc : SizeAccessible tokens) -> ParseResult n tokens
-  parseRecur context term subTokens subTokensSmaller (Access acc) = case parseTerm context subTokens (acc subTokens subTokensSmaller) of
-                                                                         (Left _) => ((_ ** (lteRefl, context, term)), (subTokens ** subTokensSmaller))
-                                                                         (Right ((size ** (lte, context', term2)), (resid ** residSmaller))) => let newApp = TmApp (liftTerm term lte) term2
-                                                                                                                                                    ((size' ** (lte', contextTerm)), (resid' ** residSmaller')) = parseRecur context' newApp resid {tokens=subTokens} residSmaller (acc subTokens subTokensSmaller) in
-                                                                                                                                                    ((size' ** (lteTransitive lte lte', contextTerm)), (resid' ** lteTransitive (lteSuccRight residSmaller') subTokensSmaller))
+  parseRepeat : {n : Nat} -> (context : Context n) -> (tokens : List Token) -> (0 acc : SizeAccessible tokens) -> Either String ((size : Nat ** (n `LTE` size, Context size, List1 (Term size))), (resid : List Token ** resid `Smaller` tokens))
+  parseRepeat context tokens (Access acc) = do ((n' ** (lte, context', term)), (resid ** residSmaller)) <- parseTerm context tokens (Access acc)
+                                               pure $ case parseRepeat context' resid (acc resid residSmaller)  of
+                                                           (Left _) => ((n' ** (lte, context', term ::: [])), (resid ** residSmaller))
+                                                           (Right ((n'' ** (lte', context'', terms)), (resid' ** residSmaller'))) => ((n'' ** (lteTransitive lte lte', context'', liftTerm term lte' ::: forget terms)), (resid' ** (lteTransitive (lteSuccRight residSmaller') residSmaller)))
 
   parseWhole : {n : Nat} -> (context: Context n) -> (tokens : List Token) -> (0 acc : SizeAccessible tokens) -> Either String (ParseResult n tokens)
-  parseWhole context tokens acc = do ((size ** (lte, context', term)), (resid ** residSmaller)) <- parseTerm context tokens acc
-                                     let ((size' ** (lte', contextTerm)), (resid' ** residSmaller')) = parseRecur context' term resid {tokens} residSmaller acc
-                                     pure ((size' ** (lteTransitive lte lte', contextTerm)), (resid' ** residSmaller'))
+  parseWhole context tokens acc = do ((n ** (lte, context', terms)), resid) <- parseRepeat context tokens acc
+                                     pure $ ((n ** (lte, context', (foldl1 id TmApp terms))), resid)
 
   parseTerm : {n : Nat} -> (context : Context n) -> (tokens : List Token) -> (0 acc : SizeAccessible tokens) -> Either String (ParseResult n tokens)
   parseTerm context ((TVar name) :: xs) _ = case findInContextOrAdd name context of
