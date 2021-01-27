@@ -4,6 +4,8 @@ import Data.Strings
 import Data.Vect
 import Decidable.Equality
 import Data.Nat
+import Control.WellFounded
+import Data.List1
 
 import Tokens
 
@@ -35,28 +37,17 @@ data Term : Nat -> Type where
   TmFalse : Term n
   TmIf : (g : Term n) -> (t : Term n) -> (e : Term n) -> Term n
 
-weakenTerm : Term n -> n `LTE` m -> Term m
-weakenTerm (TmVar k) lte = TmVar (weakenLTE k lte)
-weakenTerm (TmAbs name ty body) lte = TmAbs name ty (weakenTerm body (LTESucc lte))
-weakenTerm (TmApp x y) lte = TmApp (weakenTerm x lte) (weakenTerm y lte)
-weakenTerm TmTrue lte = TmTrue
-weakenTerm TmFalse lte = TmFalse
-weakenTerm (TmIf g t e) lte = TmIf (weakenTerm g lte) (weakenTerm t lte) (weakenTerm e lte)
-
-public export
-data Binding = NameBind | VarBind Ty
-
 public export
 Context : Nat ->Type
-Context n = Vect n (String, Binding)
+Context n = Vect n (String, Ty)
 
 public export
 addBinding : Context n -> (name : String) -> Ty -> Context (S n)
-addBinding context name ty = (name, VarBind ty) :: context
+addBinding context name ty = (name, ty) :: context
 
 public export
-getBinding : Context n -> Fin n -> Binding
-getBinding context i = snd (index i context)
+getBindingType : Context n -> Fin n -> Ty
+getBindingType context i = snd (index i context)
 
 absPrec : Prec
 absPrec = User 0
@@ -83,108 +74,60 @@ export
 show : Context n -> Term n -> String
 show context term = showPrec Open context term
 
-||| A List that is a smaller list of the given list
-data SubList : List t -> Type where
-  ||| Remove only the first element to form the SubList
-  SubTail : (tail : List t) -> SubList (head :: tail)
-  ||| Ommit an additional element from the List
-  SubLess : (sub : SubList tail) -> SubList (head :: tail)
-
-subLessHelp : Functor f =>  f (a, SubList tail) -> f (a, SubList (head :: tail))
-subLessHelp = map (\(value, subList) => (value, SubLess subList))
-
-parseMap : Functor f => (func : a -> b) -> f (a, SubList list) -> f (b, SubList list)
-parseMap func = map (\(input, subList) => (func input, subList))
-
-findInContextOrAdd : String -> Context n -> Either (Context (S n)) (Fin n)
-findInContextOrAdd name context = case findIndex ((== name) . fst) context of
-                                       Nothing => Left $ rewrite plusCommutative 1 n in (context ++ [(name, NameBind)])
-                                       (Just ind) => Right ind
-
 ParseResult : Nat -> List Token -> Type
-ParseResult n tokens = ((size : Nat ** (n `LTE` size, Context size, Term size)), SubList tokens)
-
-findRParen : {0 tokens : List Token} -> SubList tokens -> Either String (SubList tokens)
-findRParen (SubLess subList) = SubLess <$> findRParen subList
-findRParen (SubTail (TRParen :: xs)) = pure $ SubLess $ SubTail xs
-findRParen (SubTail _) = Left "Missing right parenthesis"
+ParseResult n tokens = (Term n, (resid : List Token ** resid `Smaller` tokens))
 
 mutual
-  parseRecur : {n : Nat} -> Context n -> Term n -> (tokens : List Token) -> SubList tokens -> ParseResult n tokens
-  parseRecur context term (_ :: tail) (SubLess subList) = let (result, subList') = (parseRecur context term tail subList) in
-                                                              (result, SubLess subList')
-  parseRecur context term (_ :: tail) (SubTail tail) with (parseTerm context tail)
-    parseRecur context term (_ :: tail) (SubTail tail) | (Left _) = ((_ ** (lteRefl, context, term)) , SubTail tail)
-    parseRecur context term (_ :: tail) (SubTail tail) | (Right ((size ** (lte, context', term2)), subList')) = let newAppl = TmApp (weakenTerm term lte) term2
-                                                                                                                    ((size' ** (lte', contextTerm)), subList'') = parseRecur context' newAppl tail subList' in
-                                                                                                                    ((size' ** (lteTransitive lte lte', contextTerm)), SubLess subList'')
+  parsePartType : (tokens : List Token) -> (0 acc : SizeAccessible tokens) -> Either String (Ty, (resid : List Token ** resid `Smaller` tokens))
+  parsePartType (TBool :: xs) _ = Right (TyBool, (xs ** lteRefl))
+  parsePartType (TLParen :: xs) (Access acc) = do (ty, (TRParen :: resid ** residSmaller)) <- parseType xs (acc xs ?abe)
+                                                    | _ => Left "Expected ')'"
+                                                  pure (ty, (resid ** lteSuccLeft $ lteSuccRight residSmaller))
+  parsePartType _ _ = Left "Invalid type"
 
-  parseWhole : {n : Nat} -> Context n -> (tokens : List Token) -> Either String (ParseResult n tokens)
-  parseWhole context tokens = do ((size ** (lte, context', term)), subList) <- parseTerm context tokens
-                                 let ((size' ** (lte', contextTerm)), subList') = parseRecur context' term tokens subList
-                                 pure ((size' ** (lteTransitive lte lte', contextTerm)), subList')
+  parseType : (tokens : List Token) -> (0 acc : SizeAccessible tokens) -> Either String (Ty, (resid : List Token ** resid `Smaller` tokens))
+  parseType tokens (Access acc) = do (ty, (resid ** residSmaller)) <- parsePartType tokens (Access acc)
+                                     case resid of
+                                          (TArrow :: xs) => do (tyRight, (resid' ** residSmaller')) <- parseType xs (acc xs (lteSuccLeft residSmaller))
+                                                               pure (TyArr ty tyRight, (resid' ** (lteTransitive residSmaller' (lteSuccLeft $ lteSuccLeft residSmaller))))
+                                          xs => Right (ty, (xs ** residSmaller))
 
-  parseType : (tokens : List Token) -> Either String (Ty, SubList tokens)
-  parseType (TBool :: TArrow :: xs) = do (rhs, subList) <- parseType xs
-                                         pure (TyArr TyBool rhs, SubLess $ SubLess $ subList)
-  --parseType (TBool :: TArrow :: xs) = subLessHelp $ subLessHelp $ parseMap (TyArr TyBool) $ parseType xs
-  parseType (TBool :: xs) = Right $ (TyBool, SubTail xs)
-  parseType (TLParen :: xs) = do (type, subList) <- parseType xs
-                                 subList' <- findRParen subList
-                                 pure (type, SubLess subList')
-  parseType _ = Left "Invalid type"
+mutual
+  parseTerms : {n : Nat} -> (context : Context n) -> (tokens : List Token) -> (0 acc : SizeAccessible tokens) -> Either String (List1 (Term n), (resid : List Token ** resid `Smaller` tokens))
+  parseTerms context tokens (Access acc) = do (term, (resid ** residSmaller)) <- parseTerm context tokens (Access acc)
+                                              case parseTerms context resid (acc resid residSmaller) of
+                                                   (Left _) => Right (term ::: [], (resid ** residSmaller))
+                                                   (Right (terms, (resid' ** residSmaller'))) => Right (term ::: (forget terms), (resid' ** (lteTransitive residSmaller' (lteSuccLeft residSmaller))))
 
-  parseTerm : {n : Nat} -> Context n -> (tokens : List Token) -> Either String (ParseResult n tokens)
-  parseTerm context ((TVar name) :: xs) = case findInContextOrAdd name context of
-                                               (Left newContext) => Right ((S n ** (lteSuccRight lteRefl, newContext, TmVar last)), SubTail xs)
-                                               (Right index) => Right ((n ** (lteRefl, context, TmVar index)), SubTail xs)
-  parseTerm context (TLambda :: (TVar name) :: TColon :: xs) = do (type, subList) <- parseType xs
-                                                                  (bodyData, subList') <- getBody (addBinding context name type) subList
-                                                                  pure (makeApp name type bodyData, SubLess $ SubLess $ SubLess $ subList')
-                                                                  where
-                                                                    getBody : {m : Nat} -> {tok : List Token} -> Context m -> SubList tok -> Either String (ParseResult m tok)
-                                                                    getBody context (SubLess sub) = subLessHelp (getBody context sub)
-                                                                    getBody context (SubTail (TDot :: body)) = subLessHelp $ subLessHelp $ parseWhole context body
-                                                                    getBody context (SubTail _) = Left "Expected '.'"
+  parseWhole : {n : Nat} -> (context : Context n) -> (tokens : List Token) -> (0 acc : SizeAccessible tokens) -> Either String (ParseResult n tokens)
+  parseWhole context tokens acc = do (terms, resid) <- parseTerms context tokens acc
+                                     Right (foldl1 id TmApp terms, resid)
 
-                                                                    lteSuccZeroImpossible : LTE (S n) 0 -> Void
-                                                                    lteSuccZeroImpossible LTEZero impossible
-                                                                    lteSuccZeroImpossible (LTESucc x) impossible
-
-                                                                    makeApp : String -> Ty -> (size : Nat ** (LTE (S n) size, (Context size, Term size))) -> (size : Nat ** (LTE n size, (Context size, Term size)))
-                                                                    makeApp name type (0 ** (lte, _)) = void (lteSuccZeroImpossible lte)
-                                                                    makeApp name type ((S k) ** (LTESucc lte, (_ :: context), body)) = (k ** (lte, context, TmAbs name type body))
-  parseTerm context (TTrue :: xs) = Right ((n ** (lteRefl, context, TmTrue)), SubTail xs)
-  parseTerm context (TFalse :: xs) = Right ((n ** (lteRefl, context, TmFalse)), SubTail xs)
-  parseTerm context (TIf :: xs) = do ((size ** (lte, context', guardTerm)), subList) <- parseWhole context xs
-                                     ((size' ** (lte', context'', thenTerm)), subList') <- getThen context' subList
-                                     ((size'' ** (lte'', context''', elseTerm)), subList'') <- getElse context'' subList'
-                                     pure ((size'' ** ((lteTransitive lte (lteTransitive lte' lte'')), context''', TmIf (weakenTerm guardTerm (lteTransitive lte' lte'')) (weakenTerm thenTerm lte'') elseTerm)), SubLess subList'')
-                                     where
-                                       getThen : {m : Nat} -> {tok : List Token} -> Context m -> SubList tok -> Either String (ParseResult m tok)
-                                       getThen context (SubLess sub) = subLessHelp $ getThen context sub
-                                       getThen context (SubTail (TThen :: ys)) = subLessHelp $ subLessHelp $ parseWhole context ys
-                                       getThen context (SubTail _) = Left "Exptected 'then'"
-
-                                       getElse : {m : Nat} -> {tok : List Token} -> Context m -> SubList tok -> Either String (ParseResult m tok)
-                                       getElse context (SubLess sub) = subLessHelp $ getElse context sub
-                                       getElse context (SubTail (TElse :: ys)) = subLessHelp $ subLessHelp $ parseWhole context ys
-                                       getElse context (SubTail _) = Left "Expected 'else'"
-  parseTerm context (TLParen :: xs) = do (termData, subList) <- parseWhole context xs
-                                         subList' <- findRParen subList
-                                         Right (termData, SubLess subList')
-  parseTerm _ _ = Left "Invalid Term"
-
-isSubListEmpty : SubList list -> Bool
-isSubListEmpty (SubLess sub) = isSubListEmpty sub
-isSubListEmpty (SubTail []) = True
-isSubListEmpty (SubTail _) = False
+  parseTerm : {n : Nat} -> (context : Context n) -> (tokens : List Token) -> (0 acc : SizeAccessible tokens) -> Either String (ParseResult n tokens)
+  parseTerm context ((TVar name) :: xs) (Access acc) = case findIndex ((== name) . fst) context of
+                                                            Nothing => Left (name ++ " is not bound")
+                                                            (Just idx) => Right (TmVar idx, (xs ** lteRefl))
+  parseTerm context (TLambda :: (TVar name) :: TColon :: xs) (Access acc) = do (type, ((TDot :: ys) ** residSmaller)) <- parseType xs (acc xs (lteSuccRight $ lteSuccRight $ lteRefl))
+                                                                                | _ => Left "Expected '.'"
+                                                                               (body, (resid ** residSmaller')) <- parseWhole (addBinding context name type) ys (acc ys (lteSuccLeft $ lteSuccRight $ lteSuccRight $ lteSuccRight residSmaller))
+                                                                               pure (TmAbs name type body, (resid ** (lteTransitive residSmaller' (lteSuccLeft $ lteSuccLeft $ lteSuccRight $ lteSuccRight $ lteSuccRight residSmaller))))
+  parseTerm context (TTrue :: xs) (Access acc) = Right (TmTrue, (xs ** lteRefl))
+  parseTerm context (TFalse :: xs) (Access acc) = Right (TmFalse, (xs ** lteRefl))
+  parseTerm context (TIf :: xs) (Access acc) = do (gTerm, ((TThen :: gResid) ** gSmaller)) <- parseWhole context xs (acc xs lteRefl)
+                                                    | _ => Left "Expected then"
+                                                  (tTerm, ((TElse :: tResid) ** tSmaller)) <- parseWhole context gResid (acc gResid (lteSuccLeft $ lteSuccRight gSmaller))
+                                                    | _ => Left "Expected else"
+                                                  (eTerm, (eResid ** eSmaller)) <- parseWhole context tResid (acc tResid (lteTransitive (lteSuccLeft $ lteSuccRight tSmaller) (lteSuccLeft $ lteSuccRight gSmaller)))
+                                                  pure (TmIf gTerm tTerm eTerm, (eResid ** (lteTransitive (lteSuccRight eSmaller) (lteTransitive (lteSuccLeft $ lteSuccRight tSmaller) (lteSuccLeft $ lteSuccRight gSmaller)))))
+  parseTerm context (TLParen :: xs) (Access acc) = do (term, ((TRParen :: resid) ** residSmaller)) <- parseWhole context xs (acc xs lteRefl)
+                                                       | _ => Left "Expected ')'"
+                                                      Right (term, (resid ** lteSuccLeft $ lteSuccRight residSmaller))
+  parseTerm _ _ _ = Left "Invalid Term"
 
 export
-parse : String -> Either String (size : Nat ** (Context size, Term size))
+parse : String -> Either String (Term 0)
 parse str = do
   tokens <- tokenize str
-  ((size ** (_, context, term)), remaining) <- parseWhole [] tokens
-  if isSubListEmpty remaining
-     then pure (size ** (context, term))
-     else Left "Extra tokens at end of term"
+  (term, ([] ** _)) <- parseWhole [] tokens (sizeAccessible tokens)
+    | _ => Left "Extra tokens at end of term"
+  pure term

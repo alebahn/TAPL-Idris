@@ -18,7 +18,7 @@ import Parser
 %default total
 
 data HasType : {n : Nat} -> Context n -> Term n -> Ty -> Type where
-  BoundVarHasType : getBinding context v = (VarBind type) -> HasType context (TmVar v) type
+  VarHasType : getBindingType context v = type -> HasType context (TmVar v) type
   AbsHasType : (bodyHasType : HasType (addBinding context name varTy) body type) -> HasType context (TmAbs name varTy body) (TyArr varTy type)
   AppHasType : {varTy : Ty} -> (xHasType : HasType context x (TyArr varTy returnTy)) -> (yHasType : HasType context y varTy) -> HasType context (TmApp x y) returnTy
   TrueHasType : HasType context TmTrue TyBool
@@ -26,7 +26,7 @@ data HasType : {n : Nat} -> Context n -> Term n -> Ty -> Type where
   IfHasType : (gHasType : HasType context g TyBool) -> (tHasType : HasType context t type) -> (eHasType : HasType context e type) -> HasType context (TmIf g t e) type
 
 Uninhabited (HasType context TmTrue (TyArr tyIn tyOut)) where
-  uninhabited (BoundVarHasType prf) impossible
+  uninhabited (VarHasType prf) impossible
   uninhabited (AbsHasType x) impossible
   uninhabited (AppHasType x y) impossible
   uninhabited TrueHasType impossible
@@ -34,7 +34,7 @@ Uninhabited (HasType context TmTrue (TyArr tyIn tyOut)) where
   uninhabited (IfHasType x y z) impossible
 
 Uninhabited (HasType context TmFalse (TyArr tyIn tyOut)) where
-  uninhabited (BoundVarHasType prf) impossible
+  uninhabited (VarHasType prf) impossible
   uninhabited (AbsHasType x) impossible
   uninhabited (AppHasType x y) impossible
   uninhabited TrueHasType impossible
@@ -42,7 +42,7 @@ Uninhabited (HasType context TmFalse (TyArr tyIn tyOut)) where
   uninhabited (IfHasType x y z) impossible
 
 Uninhabited (HasType [] (TmAbs name ty body) TyBool) where
-  uninhabited (BoundVarHasType prf) impossible
+  uninhabited (VarHasType prf) impossible
   uninhabited (AbsHasType x) impossible
   uninhabited (AppHasType x y) impossible
   uninhabited TrueHasType impossible
@@ -54,9 +54,7 @@ withProof x = (x ** Refl)
 
 export
 getType : {n : Nat} -> (context : Context n) -> (term : Term n) -> Either String (type : Ty ** (HasType context term type))
-getType context (TmVar x) = case (withProof (getBinding context x)) of
-                                 (NameBind ** eq) => Left $ "Unbound name"
-                                 (VarBind tt ** eq) => Right $ (tt ** BoundVarHasType eq)
+getType context (TmVar x) = Right (getBindingType context x ** VarHasType Refl)
 getType context (TmAbs name varTy body) = do (bodyType ** bodyHasType) <- getType (addBinding context name varTy) body
                                              pure (TyArr varTy bodyType ** AbsHasType bodyHasType)
 getType context (TmApp x y) = do ((TyArr var return) ** funcHasType) <- getType context x
@@ -246,7 +244,7 @@ totalEval term (More fuel) = case oneStep term of
                                   (Just term') => totalEval term' fuel
 
 Sized (HasType context t ty) where
-  size (BoundVarHasType prf) = 1
+  size (VarHasType prf) = 1
   size (AbsHasType bodyHasType) = S (size bodyHasType)
   size (AppHasType x y) = (size x) + (size y)
   size TrueHasType = 1
@@ -269,7 +267,7 @@ mapIndexCommutitive : (vect : Vect n a) -> (ind : Fin n) -> (f : a -> b) -> (f (
 mapIndexCommutitive (x :: xs) FZ f = Refl
 mapIndexCommutitive (x :: xs) (FS ind) f = mapIndexCommutitive xs ind f
 
-typeNamesHelp : {v : Fin n} -> {types : Vect n Ty} -> {names : Vect n String} -> snd (index v (typeNamesToContext types names)) = VarBind tyOut -> (tyOut = index v types)
+typeNamesHelp : {v : Fin n} -> {types : Vect n Ty} -> {names : Vect n String} -> snd (index v (typeNamesToContext types names)) = tyOut -> (tyOut = index v types)
 typeNamesHelp {v = FZ} {types = (ty :: types)} {names = (nm :: names)} Refl = Refl
 typeNamesHelp {v = FS v} {types = (ty :: types)} {names = (nm :: names)} prf = typeNamesHelp prf
 
@@ -283,9 +281,9 @@ splitSumID {a = (S n)} (FS x) = case splitSumID x of
 keepTypeMatches : {n : Nat} -> (x : Fin (n + m)) -> (y : Fin n) ->
                   (namesSub : Vect m String) -> (typesSub : Vect m Ty) ->
                   (namesStay : Vect n String) -> (typesStay : Vect n Ty) ->
-                  snd (index x (typeNamesToContext (typesStay ++ typesSub) (namesStay ++ namesSub))) = VarBind ty -> 
+                  snd (index x (typeNamesToContext (typesStay ++ typesSub) (namesStay ++ namesSub))) = ty ->
                   weakenN m y = x  ->
-                  snd (index y (typeNamesToContext typesStay namesStay)) = VarBind ty
+                  snd (index y (typeNamesToContext typesStay namesStay)) = ty
 keepTypeMatches FZ FZ namesSub typesSub (name :: namesStay) (type :: typesStay) prf prf1 = prf
 keepTypeMatches (FS x) FZ namesSub typesSub namesStay typesStay prf prf1 = absurd prf1
 keepTypeMatches FZ (FS y) namesSub typesSub namesStay typesStay prf prf1 = absurd prf1
@@ -295,19 +293,19 @@ substituteTypeSame : {n : Nat} -> (x : Fin (n + m)) -> (y : Fin m) ->
                      (typesStay : Vect n Ty) -> (namesStay : Vect n String) -> 
                      (typesSub : Vect m Ty) -> (namesSub : Vect m String) -> 
                      (substitutions : HVect (map BigStepResult typesSub)) ->
-                     (prf : snd (index x (typeNamesToContext (typesStay ++ typesSub) (namesStay ++ namesSub))) = VarBind ty) ->
+                     (prf : snd (index x (typeNamesToContext (typesStay ++ typesSub) (namesStay ++ namesSub))) = ty) ->
                      (prfEq : shift n y = x) ->
                      BigStepResult ty = index y (map BigStepResult typesSub)
 substituteTypeSame {n = 0} x y [] [] typesSub namesSub substitutions prf prfEq = rewrite prfEq in rewrite sym $ mapIndexCommutitive typesSub x BigStepResult in cong BigStepResult (typeNamesHelp prf)
 substituteTypeSame {n = (S k)} FZ y typesStay namesStay typesSub namesSub substitutions prf prfEq = absurd prfEq
 substituteTypeSame {n = (S k)} (FS x) y (type :: typesStay) (name :: namesStay) typesSub namesSub substitutions prf prfEq = substituteTypeSame x y typesStay namesStay typesSub namesSub substitutions prf (fsInjective prfEq)
 
-weakenIndexNeutral : (x : Fin m) -> (context : Context m) -> snd (index x context) = VarBind ty -> {extra : Context n} -> snd (index (weakenN n x) (context ++ extra)) = VarBind ty
+weakenIndexNeutral : (x : Fin m) -> (context : Context m) -> snd (index x context) = ty -> {extra : Context n} -> snd (index (weakenN n x) (context ++ extra)) = ty
 weakenIndexNeutral FZ (_ :: context) prf = prf
 weakenIndexNeutral (FS x) (_ :: context) prf = weakenIndexNeutral x context prf
 
 shift : {n,m : Nat} -> (extra : Context n) -> (context : Context m) -> (t : Term m ** HasType context t ty) -> (t : Term (m + n) ** HasType (context ++ extra) t ty)
-shift extra context ((TmVar x) ** (BoundVarHasType prf)) = (TmVar (weakenN n x) ** BoundVarHasType (weakenIndexNeutral x context prf))
+shift extra context ((TmVar x) ** (VarHasType prf)) = (TmVar (weakenN n x) ** VarHasType (weakenIndexNeutral x context prf))
 shift extra context ((TmAbs nm ty body) ** (AbsHasType bodyHasType)) = let (body' ** bodyHasType') = shift extra (addBinding context nm ty) (body ** bodyHasType) in
                                                                            (TmAbs nm ty body' ** AbsHasType bodyHasType')
 shift extra context ((TmApp x y) ** (AppHasType xHasType yHasType)) = let (x' ** xHasType') = shift extra context (x ** xHasType)
@@ -326,8 +324,8 @@ substituteMany : {n,m : Nat} -> (t : Term (n + m)) -> (ty : Ty) ->
                  (hasType : HasType (typeNamesToContext (typesStay ++ typesSub) (namesStay ++ namesSub)) t ty) ->
                  (substitutions : HVect (BigStepResult <$> typesSub)) ->
                  (tOut : Term n ** HasType (typeNamesToContext typesStay namesStay) tOut ty)
-substituteMany (TmVar x) ty typesStay namesStay typesSub namesSub (BoundVarHasType prf) substitutions = case splitSumID x of
-                                                                                               (Left (y ** prfEq)) => (TmVar y ** BoundVarHasType (keepTypeMatches x y namesSub typesSub namesStay typesStay prf prfEq))
+substituteMany (TmVar x) ty typesStay namesStay typesSub namesSub (VarHasType prf) substitutions = case splitSumID x of
+                                                                                               (Left (y ** prfEq)) => (TmVar y ** VarHasType (keepTypeMatches x y namesSub typesSub namesStay typesStay prf prfEq))
                                                                                                (Right (y ** prfEq)) => let (val ** (_, hasType)) = valueOnly {ty} (rewrite substituteTypeSame x y typesStay namesStay typesSub namesSub substitutions prf prfEq in (index y substitutions)) in
                                                                                                                            shift (typeNamesToContext typesStay namesStay) [] (val ** hasType)
 substituteMany (TmAbs nm tyIn body) (TyArr tyIn tyOut) typesStay namesStay typesSub namesSub (AbsHasType bodyHasType) substitutions = let (body' ** bodyHasType') = substituteMany body tyOut (tyIn :: typesStay) (nm :: namesStay) typesSub namesSub bodyHasType substitutions in
@@ -343,7 +341,7 @@ substituteMany (TmIf g t e) ty typesStay namesStay typesSub namesSub (IfHasType 
                                                                                                                                 (TmIf g' t' e' ** IfHasType gHasType' tHasType' eHasType')
 
 bigStepEvalGen : (n : Nat) -> (t : Term n) -> (tyOut : Ty) -> (types : Vect n Ty) -> (names : Vect n String) -> (hasType : HasType (typeNamesToContext types names) t tyOut) -> (substitutions : HVect (BigStepResult <$> types)) -> BigStepResult tyOut
-bigStepEvalGen n (TmVar v) tyOut types names (BoundVarHasType prf) substitutions = rewrite typeNamesHelp prf {v} {types} in rewrite mapIndexCommutitive types v BigStepResult in index v substitutions
+bigStepEvalGen n (TmVar v) tyOut types names (VarHasType prf) substitutions = rewrite typeNamesHelp prf {v} {types} in rewrite mapIndexCommutitive types v BigStepResult in index v substitutions
 bigStepEvalGen n (TmAbs name tyIn body) (TyArr tyIn tyOut) types names (AbsHasType bodyHasType) substitutions = let (body' ** bodyHasType') = substituteMany body tyOut [tyIn] [name] types names bodyHasType substitutions in
                                                                                                                     ((TmAbs name tyIn body' ** (AbsIsValue, AbsHasType bodyHasType')), (\arg => bigStepEvalGen (S n) body tyOut (tyIn :: types) (name :: names) bodyHasType (arg :: substitutions)))
 bigStepEvalGen n (TmApp x y) tyOut types names (AppHasType xHasType yHasType {varTy}) substitutions = let (_, xf) = bigStepEvalGen n x (TyArr varTy tyOut) types names xHasType substitutions 
