@@ -80,7 +80,7 @@ ParseResult n tokens = (Term n, (resid : List Token ** resid `Smaller` tokens))
 mutual
   parsePartType : (tokens : List Token) -> (0 acc : SizeAccessible tokens) -> Either String (Ty, (resid : List Token ** resid `Smaller` tokens))
   parsePartType (TBool :: xs) _ = Right (TyBool, (xs ** lteRefl))
-  parsePartType (TLParen :: xs) (Access acc) = do (ty, (TRParen :: resid ** residSmaller)) <- parseType xs (acc xs ?abe)
+  parsePartType (TLParen :: xs) (Access acc) = do (ty, (TRParen :: resid ** residSmaller)) <- parseType xs (acc xs lteRefl)
                                                     | _ => Left "Expected ')'"
                                                   pure (ty, (resid ** lteSuccLeft $ lteSuccRight residSmaller))
   parsePartType _ _ = Left "Invalid type"
