@@ -62,7 +62,6 @@ appRhsPrec = User 2
 ifPrec : Prec
 ifPrec = User 3
 
-
 showPrec : Prec -> Context n -> Term n -> String
 showPrec _ context (TmVar j) = fst (index j context)
 showPrec d context (TmAbs name ty body) = showParens (d > absPrec) ("\\" ++ name ++ ". " ++ showPrec absPrec (addBinding context name ty) body)
