@@ -3,6 +3,7 @@ module Main
 import Data.Fuel
 import Data.Vect
 
+import Terms
 import Parser
 import Eval
 
