@@ -275,52 +275,6 @@ Functor RecordMap where
 public export
 data Ty = TyRec (RecordMap Ty) | TyArr Ty Ty | TyTop
 
-recNotArr : TyRec a = TyArr x y -> Void
-recNotArr Refl impossible
-
-recNotTop : TyRec a = TyTop -> Void
-recNotTop Refl impossible
-
-arrNotTop : TyArr x y = TyTop -> Void
-arrNotTop Refl impossible
-
-mutual
-  decEqImpl_VecTy : (a, b : Vect n Ty) -> Dec (a = b)
-  decEqImpl_VecTy [] [] = Yes Refl
-  decEqImpl_VecTy (x :: xs) (y :: ys) with (decEqImpl_Ty x y)
-    decEqImpl_VecTy (x :: xs) (y :: ys) | (No contra) = No (\Refl => contra Refl)
-    decEqImpl_VecTy (x :: xs) (x :: ys) | (Yes Refl) with (decEqImpl_VecTy xs ys)
-      decEqImpl_VecTy (x :: xs) (x :: xs) | (Yes Refl) | (Yes Refl) = Yes Refl
-      decEqImpl_VecTy (x :: xs) (x :: ys) | (Yes Refl) | (No contra) = No (\Refl => contra Refl)
-
-  decEqImpl_TyRec : (a, b : RecordMap Ty) -> Dec (a = b)
-  decEqImpl_TyRec (MkRecordMap keysA valuesA) (MkRecordMap keysB valuesB) with (decEq keysA keysB)
-    decEqImpl_TyRec (MkRecordMap keysA valuesA) (MkRecordMap keysB valuesB) | (No contra) = No (\Refl => contra Refl)
-    decEqImpl_TyRec (MkRecordMap keys valuesA) (MkRecordMap keys valuesB) | (Yes Refl) with (decEqImpl_VecTy valuesA valuesB)
-      decEqImpl_TyRec (MkRecordMap keys values) (MkRecordMap keys values) | (Yes Refl) | (Yes Refl) = Yes Refl
-      decEqImpl_TyRec (MkRecordMap keys valuesA) (MkRecordMap keys valuesB) | (Yes Refl) | (No contra) = No (\Refl => contra Refl)
-
-  decEqImpl_Ty : (a, b : Ty) -> Dec (a = b)
-  decEqImpl_Ty (TyRec a) (TyRec b) with (decEqImpl_TyRec a b)
-    decEqImpl_Ty (TyRec a) (TyRec a) | (Yes Refl) = Yes Refl
-    decEqImpl_Ty (TyRec a) (TyRec b) | (No contra) = No (\Refl => contra Refl)
-  decEqImpl_Ty (TyArr w x) (TyArr y z) with (decEqImpl_Ty w y)
-    decEqImpl_Ty (TyArr w x) (TyArr w z) | (Yes Refl) with (decEqImpl_Ty x z)
-      decEqImpl_Ty (TyArr w x) (TyArr w x) | (Yes Refl) | (Yes Refl) = Yes Refl
-      decEqImpl_Ty (TyArr w x) (TyArr w z) | (Yes Refl) | (No contra) = No (\Refl => contra Refl)
-    decEqImpl_Ty (TyArr w x) (TyArr y z) | (No contra) = No (\Refl => contra Refl)
-  decEqImpl_Ty (TyRec _) (TyArr _ _) = No recNotArr
-  decEqImpl_Ty (TyArr _ _) (TyRec _) = No (\eq => (recNotArr $ sym eq))
-  decEqImpl_Ty (TyRec x) TyTop = No recNotTop
-  decEqImpl_Ty (TyArr x y) TyTop = No arrNotTop
-  decEqImpl_Ty TyTop (TyRec x) = No (negEqSym recNotTop)
-  decEqImpl_Ty TyTop (TyArr x y) = No (negEqSym arrNotTop)
-  decEqImpl_Ty TyTop TyTop = Yes Refl
-
-export
-DecEq Ty where
-  decEq = decEqImpl_Ty
-
 mutual
   public export
   data Term : Nat -> Type where
