@@ -22,6 +22,7 @@ data Token = TLambda
            | TEqual
            | TComma
            | TTop
+           | TBot
 
 isValidVarChar : Char -> Bool
 isValidVarChar '\'' = True
@@ -34,6 +35,7 @@ isValidVarName str = all isValidVarChar (unpack str)
 stringToToken : String -> Either String Token
 stringToToken "lambda" = Right TLambda
 stringToToken "Top" = Right TTop
+stringToToken "Bot" = Right TBot
 stringToToken "." = Right TDot
 stringToToken "(" = Right TLParen
 stringToToken ")" = Right TRParen

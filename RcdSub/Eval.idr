@@ -30,6 +30,7 @@ mutual
 
   data Subtype : Ty -> Ty -> Type where
     SubTop : Subtype a TyTop
+    SubBot : Subtype TyBot b
     SubArrow : Subtype inB inA -> Subtype outA outB -> Subtype (TyArr inA outA) (TyArr inB outB)
     SubRcd : RecSub recA recB -> Subtype (TyRec recA) (TyRec recB)
 
@@ -37,21 +38,43 @@ Uninhabited (Subtype (TyArr a b) (TyRec rec)) where
   uninhabited SubTop impossible
   uninhabited (SubArrow x y) impossible
   uninhabited (SubRcd x) impossible
+  uninhabited SubBot impossible
 
 Uninhabited (Subtype (TyRec rec) (TyArr a b)) where
   uninhabited SubTop impossible
   uninhabited (SubArrow x y) impossible
   uninhabited (SubRcd x) impossible
+  uninhabited SubBot impossible
 
 Uninhabited (Subtype TyTop (TyArr a b)) where
   uninhabited SubTop impossible
   uninhabited (SubArrow x y) impossible
   uninhabited (SubRcd x) impossible
+  uninhabited SubBot impossible
 
 Uninhabited (Subtype TyTop (TyRec rec)) where
   uninhabited SubTop impossible
   uninhabited (SubArrow x y) impossible
   uninhabited (SubRcd x) impossible
+  uninhabited SubBot impossible
+
+Uninhabited (Subtype TyTop TyBot) where
+  uninhabited SubTop impossible
+  uninhabited (SubArrow x y) impossible
+  uninhabited (SubRcd x) impossible
+  uninhabited SubBot impossible
+
+Uninhabited (Subtype (TyRec rec) TyBot) where
+  uninhabited SubTop impossible
+  uninhabited (SubArrow x y) impossible
+  uninhabited (SubRcd x) impossible
+  uninhabited SubBot impossible
+
+Uninhabited (Subtype (TyArr a b) TyBot) where
+  uninhabited SubTop impossible
+  uninhabited (SubArrow x y) impossible
+  uninhabited (SubRcd x) impossible
+  uninhabited SubBot impossible
 
 recSubAddLeft : RecSub (MkRecordMap namesA typesA) b -> RecSub (MkRecordMap (AddElement nameA namesA nameANotInNamesA) (tyA :: typesA)) b
 recSubAddLeft RecSubEmpty = RecSubEmpty
@@ -77,6 +100,7 @@ mutual
   subRefl {x = (TyRec x)} = SubRcd recSubRefl
   subRefl {x = (TyArr x y)} = SubArrow subRefl subRefl
   subRefl {x = TyTop} = SubTop
+  subRefl {x = TyBot} = SubBot
 
 record RecSubDatum (namesX, namesY : BindingKeys) (typesX : Vect (length namesX) Ty) (typesY : Vect (length namesY) Ty) (iY : Nat) (0 inBoundsY : InBounds iY namesY) where
   constructor MkRecSubDatum
@@ -102,6 +126,7 @@ mutual
 
   subTrans : Subtype x y -> Subtype y z -> Subtype x z
   subTrans _ SubTop = SubTop
+  subTrans SubBot _ = SubBot
   subTrans (SubArrow insX outsX) (SubArrow insY outsY) = SubArrow (subTrans insY insX) (subTrans outsX outsY)
   subTrans (SubRcd x) (SubRcd y) = SubRcd (subRecTrans x y)
 
@@ -127,6 +152,7 @@ mutual
 
   decSubtype : (x, y : Ty) -> Dec (Subtype x y)
   decSubtype _ TyTop = Yes SubTop
+  decSubtype TyBot _ = Yes SubBot
   decSubtype (TyRec x) (TyRec y) with (decRecSub x y)
     decSubtype (TyRec _) (TyRec _) | (Yes prf) = Yes (SubRcd prf)
     decSubtype (TyRec x) (TyRec y) | (No contra) = No (\(SubRcd prf) => contra prf)
@@ -139,6 +165,9 @@ mutual
   decSubtype TyTop (TyRec y) = No uninhabited
   decSubtype (TyRec x) (TyArr y z) = No uninhabited
   decSubtype TyTop (TyArr y z) = No uninhabited
+  decSubtype (TyRec x) TyBot = No uninhabited
+  decSubtype TyTop TyBot = No uninhabited
+  decSubtype (TyArr x y) TyBot = No uninhabited
 
 mutual
   data RecordMapHasType : {n : Nat} -> Context n  -> RecordMap (Term n) -> RecordMap Ty -> Type where
@@ -149,8 +178,10 @@ mutual
     VarHasType : getBindingType context v = type -> HasType context (TmVar v) type
     AbsHasType : (bodyHasType : HasType (addBinding context name varTy) body type) -> HasType context (TmAbs name varTy body) (TyArr varTy type)
     AppHasType : {varTy,varSubTy : Ty} -> (xHasType : HasType context x (TyArr varTy returnTy)) -> (isSub : Subtype varSubTy varTy) -> (yHasType : HasType context y varSubTy) -> HasType context (TmApp x y) returnTy
+    AppBotHasType : {varTy : Ty} -> (xIsBot : HasType context x TyBot) -> (yHasType : HasType context y varTy) -> HasType context (TmApp x y) TyBot
     RecHasType : RecordMapHasType context recBinds tyBinds -> HasType context (TmRec recBinds) (TyRec tyBinds)
     ProjHasType : (i : Nat) -> (names : BindingKeys) -> (types : Vect (length names) Ty) -> HasType context rec (TyRec (MkRecordMap names types)) -> {auto 0 ok : InBounds i names} -> HasType context (TmProj rec (index i names)) (index (inBoundsToFinLength i {ok}) types)
+    ProjBotHasType : (recIsBot : HasType context rec TyBot) -> HasType context (TmProj rec name) TyBot
 
 withProof : (x : t) -> (y : t ** x = y)
 withProof x = (x ** Refl)
@@ -169,15 +200,17 @@ mutual
   getType context (TmVar x) = Right (getBindingType context x ** VarHasType Refl)
   getType context (TmAbs name varTy body) = do (bodyType ** bodyHasType) <- getType (addBinding context name varTy) body
                                                pure (TyArr varTy bodyType ** AbsHasType bodyHasType)
-  getType context (TmApp x y) = do ((TyArr var return) ** funcHasType) <- getType context x
+  getType context (TmApp x y) = do (subTy ** subHasType) <- getType context y
+                                   ((TyArr var return) ** funcHasType) <- getType context x
+                                      | (TyBot ** funcIsBot) => Right (TyBot ** (AppBotHasType funcIsBot subHasType))
                                       | _ => Left "Expected function type in application"
-                                   (subTy ** subHasType) <- getType context y
                                    case decSubtype subTy var of
                                         (Yes subType) => Right (return ** (AppHasType funcHasType subType subHasType))
                                         (No _) => Left "Type passed to application is not a subtype of argument to function"
   getType context (TmRec (MkRecordMap names terms)) = do (tyRec ** recHasType) <- getRecTypes context names terms
                                                          Right (TyRec tyRec ** RecHasType recHasType)
   getType context (TmProj rec name) = do (TyRec (MkRecordMap names types) ** recHasType) <- getType context rec
+                                          | (TyBot ** recIsBot) => Right (TyBot ** (ProjBotHasType recIsBot))
                                           | _ => Left "Expected record type in projection"
                                          case getIndex name names of
                                               Left _ => Left (name ++ " is not a label in record")
@@ -199,11 +232,13 @@ mutual
   BigStepResult TyTop = CoreValue TyTop
   BigStepResult (TyRec (MkRecordMap names types)) = (CoreValue (TyRec (MkRecordMap names types)), HVect (BigStepResults types))
   BigStepResult (TyArr tyIn tyOut) = (CoreValue (TyArr tyIn tyOut), (BigStepResult tyIn) -> (BigStepResult tyOut))
+  BigStepResult TyBot = Void
 
 valueOnly : {ty : Ty} -> BigStepResult ty -> CoreValue ty
 valueOnly {ty = TyTop} x = x
 valueOnly {ty = TyRec (MkRecordMap _ _)} (x, _) = x
 valueOnly {ty = TyArr _ _} (x, _) = x
+valueOnly {ty = TyBot} x = void x
 
 typeNamesToContext : (types : Vect n Ty) -> (names : Vect n String) -> Context n
 typeNamesToContext [] [] = []
@@ -262,13 +297,18 @@ mutual
   shift extra context ((TmVar x) ** (VarHasType prf)) = (TmVar (weakenN n x) ** VarHasType (weakenIndexNeutral x context prf))
   shift extra context ((TmAbs nm ty body) ** (AbsHasType bodyHasType)) = let (body' ** bodyHasType') = shift extra (addBinding context nm ty) (body ** bodyHasType) in
                                                                              (TmAbs nm ty body' ** AbsHasType bodyHasType')
+  shift extra context ((TmApp x y) ** (AppBotHasType xIsBot yHasType)) = let (x' ** xIsBot') = shift extra context (x ** xIsBot)
+                                                                             (y' ** yHasType') = shift extra context (y ** yHasType) in
+                                                                             (TmApp x' y' ** AppBotHasType xIsBot' yHasType')
   shift extra context ((TmApp x y) ** (AppHasType xHasType argIsSubType yHasType)) = let (x' ** xHasType') = shift extra context (x ** xHasType)
                                                                                          (y' ** yHasType') = shift extra context (y ** yHasType) in
                                                                                          (TmApp x' y' ** AppHasType xHasType' argIsSubType yHasType')
   shift extra context ((TmRec (MkRecordMap names terms)) ** (RecHasType recHasType)) = let (rec' ** recHasType') = shiftRec extra context names terms recHasType in
                                                                                            (TmRec rec' ** RecHasType recHasType')
+  shift extra context ((TmProj rec name) ** (ProjBotHasType recIsBot)) = let (rec' ** recIsBot') = shift extra context (rec ** recIsBot) in
+                                                                             (TmProj rec' name ** ProjBotHasType recIsBot')
   shift extra context ((TmProj rec _) ** (ProjHasType i names types recHasType)) = let (rec' ** recHasType') = shift extra context (rec ** recHasType) in
-                                                                                      (TmProj rec' (index i names) ** (ProjHasType i names types recHasType'))
+                                                                                       (TmProj rec' (index i names) ** (ProjHasType i names types recHasType'))
 
 mutual
   substituteManyRec : {n,m : Nat} -> (rec : RecordMap (Term (n + m))) -> (tyRec : RecordMap Ty) ->
@@ -307,6 +347,15 @@ mutual
                                                                                                                                       (val' ** subTy ** isSubTy ** hasSubty')
   substituteMany (TmAbs nm tyIn body) (TyArr tyIn tyOut) typesStay namesStay typesSub namesSub (AbsHasType bodyHasType) substitutions = let (body' ** bodySubty ** bodyIsSubty ** bodyHasType') = substituteMany body tyOut (tyIn :: typesStay) (nm :: namesStay) typesSub namesSub bodyHasType substitutions in
                                                                                                                                             (TmAbs nm tyIn body' ** (TyArr tyIn bodySubty) ** SubArrow subRefl bodyIsSubty ** AbsHasType bodyHasType')
+  substituteMany (TmApp x y) TyBot typesStay namesStay typesSub namesSub (AppBotHasType xIsBot yHasType {varTy}) substitutions =
+    let (x' ** subX ** isSubX ** xHasType') = substituteMany x TyBot typesStay namesStay typesSub namesSub xIsBot substitutions
+        (y' ** subY ** isSubY ** yHasType') = substituteMany y varTy typesStay namesStay typesSub namesSub yHasType substitutions in
+        appBotHelper subX isSubX x' y' xHasType' subY yHasType'
+        where
+          appBotHelper : (subX : Ty) -> (isSubX : Subtype subX TyBot) ->
+                         (x, y : Term n) -> (xHasType : HasType (typeNamesToContext typesStay namesStay) x subX) -> (subY : Ty) -> (yHasType : HasType (typeNamesToContext typesStay namesStay) y subY) ->
+                         (tOut : Term n ** (subTy : Ty ** (isSubType : Subtype subTy TyBot ** HasType (typeNamesToContext typesStay namesStay) tOut subTy)))
+          appBotHelper TyBot SubBot x y xHasType subY yHasType = (TmApp x y ** TyBot ** SubBot ** AppBotHasType xHasType yHasType)
   substituteMany (TmApp x y) ty typesStay namesStay typesSub namesSub (AppHasType xHasType isSubTy yHasType {varTy} {varSubTy}) substitutions =
     let (x' ** subX ** isSubX ** xHasType') = substituteMany x (TyArr varTy ty) typesStay namesStay typesSub namesSub xHasType substitutions
         (y' ** subY ** isSubY ** yHasType') = substituteMany y varSubTy typesStay namesStay typesSub namesSub yHasType substitutions in
@@ -315,9 +364,18 @@ mutual
           appHelper : (subX : Ty) -> (isSubX : Subtype subX (TyArr varTy ty)) -> (subY : Ty) -> (isSubY : Subtype subY varSubTy) ->
                       (x, y : Term n) -> (xHasType : HasType (typeNamesToContext typesStay namesStay) x subX) -> (yHasType : HasType (typeNamesToContext typesStay namesStay) y subY) ->
                       (tOut : Term n ** (subTy : Ty ** (isSubType : Subtype subTy ty ** HasType (typeNamesToContext typesStay namesStay) tOut subTy)))
+          appHelper TyBot SubBot subY isSubY x y xHasType yHasType = (TmApp x y ** TyBot ** SubBot ** AppBotHasType xHasType yHasType)
           appHelper (TyArr supIn subOut) (SubArrow subIns subOuts) subY isSubY x y xHasType yHasType = (TmApp x y ** subOut ** subOuts ** AppHasType xHasType (subTrans isSubY (subTrans isSubTy subIns)) yHasType)
   substituteMany (TmRec rec) (TyRec tyRec) typesStay namesStay typesSub namesSub (RecHasType recHasTy) substitutions = let (rec' ** recSubTy ** recIsSubTy ** recHasType') = substituteManyRec rec tyRec typesStay namesStay typesSub namesSub recHasTy substitutions in
                                                                                                                            (TmRec rec' ** TyRec recSubTy ** SubRcd recIsSubTy ** RecHasType recHasType')
+  substituteMany (TmProj rec name) TyBot typesStay namesStay typesSub namesSub (ProjBotHasType recIsBot) substitutions =
+    let (rec' ** subTy ** isSubty ** recIsBot') = substituteMany rec _ typesStay namesStay typesSub namesSub recIsBot substitutions in
+        projBotHelper subTy isSubty rec' recIsBot'
+        where
+          projBotHelper : (subTy : Ty) -> (isSubty : Subtype subTy TyBot) ->
+                          (rec : Term n) -> (recIsBot : HasType (typeNamesToContext typesStay namesStay) rec subTy) ->
+                          (tOut : Term n ** (subTy : Ty ** (isSubType : Subtype subTy TyBot ** HasType (typeNamesToContext typesStay namesStay) tOut subTy)))
+          projBotHelper TyBot SubBot rec recIsBot = (TmProj rec name ** TyBot ** SubBot ** ProjBotHasType recIsBot)
   substituteMany (TmProj rec _) _ typesStay namesStay typesSub namesSub (ProjHasType i names types recHasTy {ok}) substitutions =
     let (rec' ** subTy ** isSubty ** recHasType') = substituteMany rec _ typesStay namesStay typesSub namesSub recHasTy substitutions in
         projHelper subTy isSubty rec' recHasType'
@@ -333,7 +391,8 @@ mutual
           projHelper : (subTy : Ty) -> (isSubty : Subtype subTy (TyRec (MkRecordMap names types))) ->
                        (rec : Term n) -> (recHasType : HasType (typeNamesToContext typesStay namesStay) rec subTy) ->
                        (tOut : Term n ** (subTy : Ty ** (isSubType : Subtype subTy (index (inBoundsToFinLength i {ok}) types) ** HasType (typeNamesToContext typesStay namesStay) tOut subTy)))
-          projHelper (TyRec (MkRecordMap subNames subTypes)) (SubRcd subRcd) = projHelper' subNames subTypes subRcd {names} {types} {i} {ok}
+          projHelper (TyRec (MkRecordMap subNames subTypes)) (SubRcd subRcd) rec recHasType = projHelper' subNames subTypes subRcd {names} {types} {i} {ok} rec recHasType
+          projHelper TyBot SubBot rec recHasType = (TmProj rec (index i names) ** TyBot ** SubBot ** ProjBotHasType recHasType)
 
 indexBigStepResultsIsBigStepIndex : (i : Fin n) -> (tyRec : Vect n Ty) -> BigStepResult (index i tyRec) = index i (BigStepResults tyRec)
 indexBigStepResultsIsBigStepIndex FZ (ty :: _) = Refl
@@ -399,10 +458,12 @@ mutual
                                                                                                                       ( (TmAbs name tyIn body' ** AbsIsValue ** TyArr tyIn subOut ** SubArrow subRefl subOutIsSub ** AbsHasType bodyHasType')
                                                                                                                       , (\arg => bigStepEvalGen (S n) body tyOut (tyIn :: types) (name :: names) bodyHasType (arg :: substitutions))
                                                                                                                       )
+  bigStepEvalGen n (TmApp x y) TyBot types names (AppBotHasType xIsBot yHasType {varTy}) substitutions = void $ bigStepEvalGen n x TyBot types names xIsBot substitutions --Void is Void, pass to void to erase
   bigStepEvalGen n (TmApp x y) tyOut types names (AppHasType xHasType varIsSub yHasType {varTy} {varSubTy}) substitutions = let (_, xf) = bigStepEvalGen n x (TyArr varTy tyOut) types names xHasType substitutions
                                                                                                                                 y'= bigStepEvalGen n y varSubTy types names yHasType substitutions in
                                                                                                                                 xf (weakenType varIsSub y')
   bigStepEvalGen n (TmRec rec) (TyRec tyRec) types names (RecHasType recHasType) substitutions = bigStepEvalGenRec n rec tyRec types names recHasType substitutions
+  bigStepEvalGen n (TmProj rec name) TyBot types names (ProjBotHasType recIsBot) substitutions = void $ bigStepEvalGen n rec TyBot types names recIsBot substitutions --Void is Void, pass to void to erase
   bigStepEvalGen n (TmProj rec _) _ types names (ProjHasType i recNames tyRec recHasType {ok}) substitutions = let (_, recResult) = bigStepEvalGen n rec (TyRec (MkRecordMap recNames tyRec)) types names recHasType substitutions in
                                                                                                                    rewrite indexBigStepResultsIsBigStepIndex (inBoundsToFinLength i {ok}) tyRec in index (inBoundsToFinLength i) recResult
 

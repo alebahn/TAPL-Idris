@@ -273,7 +273,7 @@ Functor RecordMap where
   map f (MkRecordMap keys values) = MkRecordMap keys (f <$> values)
 
 public export
-data Ty = TyRec (RecordMap Ty) | TyArr Ty Ty | TyTop
+data Ty = TyRec (RecordMap Ty) | TyArr Ty Ty | TyTop | TyBot
 
 mutual
   public export

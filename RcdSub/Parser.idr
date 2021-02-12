@@ -25,6 +25,7 @@ mutual
 
   parsePartType : (tokens : List Token) -> (0 acc : SizeAccessible tokens) -> Either String (Ty, (Subset (List Token) (\resid => resid `Smaller` tokens)))
   parsePartType (TTop :: xs) _ = Right (TyTop, Element xs lteRefl)
+  parsePartType (TBot :: xs) _ = Right (TyBot, Element xs lteRefl)
   parsePartType (TLBrace :: TRBrace :: xs) _ = Right (TyRec (MkRecordMap EmptySet []), Element xs (lteSuccRight lteRefl))
   parsePartType (TLBrace :: xs) (Access acc) = do (recordMap, (Element resid residSmaller)) <- parseRecTy xs (acc xs lteRefl)
                                                   Right (TyRec recordMap, (Element resid (lteSuccRight residSmaller)))
