@@ -12,7 +12,12 @@ import Data.Nat
 public export
 data Token = TLambda
            | TVar String
+           | TTrue
+           | TFalse
            | TDot
+           | TIf
+           | TThen
+           | TElse
            | TLParen
            | TRParen
            | TColon
@@ -23,6 +28,7 @@ data Token = TLambda
            | TComma
            | TTop
            | TBot
+           | TBool
 
 isValidVarChar : Char -> Bool
 isValidVarChar '\'' = True
@@ -34,8 +40,14 @@ isValidVarName str = all isValidVarChar (unpack str)
 
 stringToToken : String -> Either String Token
 stringToToken "lambda" = Right TLambda
+stringToToken "if" = Right TIf
+stringToToken "then" = Right TThen
+stringToToken "else" = Right TElse
+stringToToken "true" = Right TTrue
+stringToToken "false" = Right TFalse
 stringToToken "Top" = Right TTop
 stringToToken "Bot" = Right TBot
+stringToToken "Bool" = Right TBool
 stringToToken "." = Right TDot
 stringToToken "(" = Right TLParen
 stringToToken ")" = Right TRParen

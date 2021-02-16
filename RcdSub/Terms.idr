@@ -112,6 +112,7 @@ unpackInjective prf = believe_me (Refl {x=x})
 notBeforeNotEqToAfter : (x, y : String) -> Not (x = y) -> Not (SortsBefore x y) -> SortsBefore y x
 notBeforeNotEqToAfter x y notEq notBefore = CharList.notBeforeNotEqToAfter (unpack x) (unpack y) (notEq . unpackInjective) notBefore
 
+export
 NEQ : String -> String -> Type
 NEQ x y = Either (SortsBefore x y) (SortsBefore y x)
 
@@ -144,6 +145,11 @@ eitherNeqEq x y with (decEq x y)
     eitherNeqEq x y | (No _) | (Yes prf) = Left (Left prf)
     eitherNeqEq x y | (No contraEq) | (No contraBefore) = Left (Right (notBeforeNotEqToAfter x y contraEq contraBefore))
 
+export
+symNeq : NEQ a b -> NEQ b a
+symNeq (Left x) = Right x
+symNeq (Right x) = Left x
+
 mutual
   public export
   data BindingKeys : Type where
@@ -153,7 +159,7 @@ mutual
   public export
   data SetMissing : String -> BindingKeys -> Type where
     EmptyMissing : SetMissing val EmptySet
-    ConsMissing : (elem : String) -> (head : String) -> (elemNotHead : elem `NEQ` head) -> (elemNotInTail : SetMissing elem tail) -> {existingSetMissing : SetMissing head tail} -> SetMissing elem (AddElement head tail existingSetMissing)
+    ConsMissing : (elem : String) -> (head : String) -> {tail : BindingKeys} -> (elemNotHead : elem `NEQ` head) -> (elemNotInTail : SetMissing elem tail) -> {existingSetMissing : SetMissing head tail} -> SetMissing elem (AddElement head tail existingSetMissing)
 
 public export
 length : BindingKeys -> Nat
@@ -231,6 +237,11 @@ indexSameToInBoundsSame (AddElement newVal set valIsNew) 0 (S k) {ok = InFirst} 
 indexSameToInBoundsSame (AddElement newVal set valIsNew) (S k) 0 {ok = InLater ok} {ok' = InFirst} prf = void $ setMissingIndexAbsurd set k (replace (sym prf) valIsNew {p = (\x=>SetMissing x set)})
 indexSameToInBoundsSame (AddElement newVal set valIsNew) (S k) (S j) {ok = InLater ok} {ok' = InLater ok'} prf = cong FS (indexSameToInBoundsSame set k j prf)
 
+export
+setMissingToIndexNeq : {name : String} -> {names : BindingKeys} -> (nameIsNew : SetMissing name names) -> (i : Nat) -> {0 ok : InBounds i names} -> NEQ name (index i names)
+setMissingToIndexNeq (ConsMissing name head elemNotHead _) 0 {ok=InFirst} = elemNotHead
+setMissingToIndexNeq (ConsMissing name _ _ elemNotInTail) (S i) {ok=InLater ok} = setMissingToIndexNeq elemNotInTail i
+
 DecEq BindingKeys where
   decEq EmptySet EmptySet = Yes Refl
   decEq EmptySet (AddElement newVal set valIsNew) = No emptyNotAdd
@@ -273,7 +284,7 @@ Functor RecordMap where
   map f (MkRecordMap keys values) = MkRecordMap keys (f <$> values)
 
 public export
-data Ty = TyRec (RecordMap Ty) | TyArr Ty Ty | TyTop | TyBot
+data Ty = TyRec (RecordMap Ty) | TyArr Ty Ty | TyTop | TyBot | TyBool
 
 mutual
   public export
@@ -283,6 +294,9 @@ mutual
     TmApp : Term n -> Term n -> Term n
     TmRec : RecordMap (Term n) -> Term n
     TmProj : Term n -> (name : String) -> Term n
+    TmTrue : Term n
+    TmFalse : Term n
+    TmIf : (g : Term n) -> (t : Term n) -> (e : Term n) -> Term n
 
 public export
 Context : Nat ->Type
@@ -308,6 +322,9 @@ appLhsPrec = User 2
 appRhsPrec : Prec
 appRhsPrec = User 3
 
+ifPrec : Prec
+ifPrec = User 4
+
 joinWith : String -> List String -> String
 joinWith glue [] = ""
 joinWith glue (x :: xs) = foldl (++) x ((glue ++) <$> xs)
@@ -326,6 +343,9 @@ mutual
   showPrec d context (TmApp x y) = showParens (d >= appRhsPrec) (showPrec appLhsPrec context x ++ " " ++ showPrec appRhsPrec context y)
   showPrec _ context (TmRec recordMap) = "{" ++ joinWith ", " (showRecord context recordMap) ++ "}"
   showPrec d context (TmProj x y) = showParens (d > projPrec) (showPrec projPrec context x ++ "." ++ y)
+  showPrec _ context TmTrue = "true"
+  showPrec _ context TmFalse = "false"
+  showPrec d context (TmIf g t e) = showParens (d >= ifPrec) ("if " ++ (showPrec ifPrec context g) ++ " then " ++ (showPrec ifPrec context t) ++ " else " ++ (showPrec ifPrec context e)) 
 
 export
 show : Context n -> Term n -> String

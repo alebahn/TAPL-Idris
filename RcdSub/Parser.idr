@@ -26,6 +26,7 @@ mutual
   parsePartType : (tokens : List Token) -> (0 acc : SizeAccessible tokens) -> Either String (Ty, (Subset (List Token) (\resid => resid `Smaller` tokens)))
   parsePartType (TTop :: xs) _ = Right (TyTop, Element xs lteRefl)
   parsePartType (TBot :: xs) _ = Right (TyBot, Element xs lteRefl)
+  parsePartType (TBool :: xs) _ = Right (TyBool, Element xs lteRefl)
   parsePartType (TLBrace :: TRBrace :: xs) _ = Right (TyRec (MkRecordMap EmptySet []), Element xs (lteSuccRight lteRefl))
   parsePartType (TLBrace :: xs) (Access acc) = do (recordMap, (Element resid residSmaller)) <- parseRecTy xs (acc xs lteRefl)
                                                   Right (TyRec recordMap, (Element resid (lteSuccRight residSmaller)))
@@ -89,6 +90,14 @@ mutual
   parseTerm context (TLParen :: xs) (Access acc) = do (term, (Element (TRParen :: resid) residSmaller)) <- parseWhole context xs (acc xs lteRefl)
                                                        | _ => Left "Expected ')'"
                                                       Right (term, (Element resid (lteSuccLeft $ lteSuccRight residSmaller)))
+  parseTerm context (TTrue :: xs) _ = Right (TmTrue, Element xs lteRefl)
+  parseTerm context (TFalse :: xs) _ = Right (TmFalse, Element xs lteRefl)
+  parseTerm context (TIf :: xs) (Access acc) = do (guardTerm, Element (TThen :: guardRemainder) grSmaller) <- parseTerm context xs (acc xs lteRefl)
+                                                   | _ => Left "Expected 'then'"
+                                                  (thenTerm, Element (TElse :: thenRemainder) trSmaller) <- parseTerm context guardRemainder (acc guardRemainder (lteSuccLeft $ lteSuccRight grSmaller))
+                                                   | _ => Left "Expected 'else'"
+                                                  (elseTerm, Element elseRemainder erSmaller) <- parseTerm context thenRemainder (acc thenRemainder (lteSuccLeft (lteTransitive trSmaller $ lteSuccLeft $ lteSuccLeft $ lteSuccRight grSmaller)))
+                                                  Right (TmIf guardTerm thenTerm elseTerm, Element elseRemainder (lteTransitive erSmaller $ lteSuccLeft $ lteSuccLeft $ lteTransitive trSmaller $ lteSuccLeft $ lteSuccLeft $ lteSuccRight grSmaller))
   parseTerm context (TLBrace :: TRBrace :: xs) _ = Right (TmRec (MkRecordMap EmptySet []),  Element xs (lteSuccRight lteRefl))
   parseTerm context (TLBrace :: xs) (Access acc) = do (termRecord, Element resid residSmaller) <- parseRecord context xs (acc xs lteRefl)
                                                       Right (TmRec termRecord, Element resid (lteSuccRight residSmaller))
