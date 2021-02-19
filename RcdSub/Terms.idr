@@ -209,12 +209,8 @@ index0OfAddElementNew = Refl
 
 export
 setMissingIndexAbsurd : (set : BindingKeys) -> (i : Nat) -> {0 ok : InBounds i set} -> SetMissing (index i set {ok}) set -> Void
-setMissingIndexAbsurd EmptySet i x {ok} = void $ uninhabited ok
 setMissingIndexAbsurd (AddElement head tail headIsNew) 0 (ConsMissing _ head elemNotInHead elemNotInTail) {ok=InFirst} = neqToNotEqual elemNotInHead Refl
 setMissingIndexAbsurd (AddElement head tail headIsNew) (S i) (ConsMissing _ head elemNotInHead elemNotInTail) {ok=InLater ok} = setMissingIndexAbsurd tail i elemNotInTail
---idris wanted to accept just this :/
---setMissingIndexAbsurd EmptySet i x {ok} = void $ uninhabited ok
---setMissingIndexAbsurd (AddElement _ _ _) _ EmptyMissing impossible -- this doesn't seem right to me, but whatever
 
 inBoundsUnique : (set : BindingKeys) -> (i : Nat) -> {0 ok,ok' : InBounds i set} -> ok = ok'
 inBoundsUnique EmptySet i {ok} = void $ uninhabited ok
