@@ -1,6 +1,6 @@
 module Parser
 
-import Data.Strings
+import Data.String
 import Data.Vect
 import Decidable.Equality
 import Data.Nat
@@ -76,8 +76,8 @@ show context term = showPrec Open context term
 
 mutual
   parsePartType : (tokens : List Token) -> (0 acc : SizeAccessible tokens) -> Either String (Ty, (Subset (List Token) (\resid => resid `Smaller` tokens)))
-  parsePartType (TBool :: xs) _ = Right (TyBool, (Element xs lteRefl))
-  parsePartType (TLParen :: xs) (Access acc) = do (ty, (Element (TRParen :: resid) residSmaller)) <- parseType xs (acc xs lteRefl)
+  parsePartType (TBool :: xs) _ = Right (TyBool, (Element xs (reflexive {rel = LTE})))
+  parsePartType (TLParen :: xs) (Access acc) = do (ty, (Element (TRParen :: resid) residSmaller)) <- parseType xs (acc xs (reflexive {rel = LTE}))
                                                     | _ => Left "Expected ')'"
                                                   pure (ty, (Element resid (lteSuccLeft $ lteSuccRight residSmaller)))
   parsePartType _ _ = Left "Invalid type"
@@ -86,7 +86,7 @@ mutual
   parseType tokens (Access acc) = do (ty, (Element resid residSmaller)) <- parsePartType tokens (Access acc)
                                      case resid of
                                           (TArrow :: xs) => do (tyRight, (Element resid' residSmaller')) <- parseType xs (acc xs (lteSuccLeft residSmaller))
-                                                               pure (TyArr ty tyRight, (Element resid' (lteTransitive residSmaller' (lteSuccLeft $ lteSuccLeft residSmaller))))
+                                                               pure (TyArr ty tyRight, (Element resid' (transitive {rel=LTE} residSmaller' (lteSuccLeft $ lteSuccLeft residSmaller))))
                                           xs => Right (ty, (Element xs residSmaller))
 
 ParseResult : Nat -> List Token -> Type
@@ -97,29 +97,29 @@ mutual
   parseTerms context tokens (Access acc) = do (term, (Element resid residSmaller)) <- parseTerm context tokens (Access acc)
                                               case parseTerms context resid (acc resid residSmaller) of
                                                    (Left _) => Right (term ::: [], (Element resid residSmaller))
-                                                   (Right (terms, (Element resid' residSmaller'))) => Right (term ::: (forget terms), (Element resid' (lteTransitive residSmaller' (lteSuccLeft residSmaller))))
+                                                   (Right (terms, (Element resid' residSmaller'))) => Right (term ::: (forget terms), (Element resid' (transitive {rel=LTE} residSmaller' (lteSuccLeft residSmaller))))
 
   parseWhole : {n : Nat} -> (context : Context n) -> (tokens : List Token) -> (0 acc : SizeAccessible tokens) -> Either String (ParseResult n tokens)
   parseWhole context tokens acc = do (terms, resid) <- parseTerms context tokens acc
-                                     Right (foldl1 id TmApp terms, resid)
+                                     Right (foldl1 TmApp terms, resid)
 
   parseTerm : {n : Nat} -> (context : Context n) -> (tokens : List Token) -> (0 acc : SizeAccessible tokens) -> Either String (ParseResult n tokens)
   parseTerm context ((TVar name) :: xs) (Access acc) = case findIndex ((== name) . fst) context of
                                                             Nothing => Left (name ++ " is not bound")
-                                                            (Just idx) => Right (TmVar idx, (Element xs lteRefl))
-  parseTerm context (TLambda :: (TVar name) :: TColon :: xs) (Access acc) = do (type, (Element (TDot :: ys) residSmaller)) <- parseType xs (acc xs (lteSuccRight $ lteSuccRight $ lteRefl))
+                                                            (Just idx) => Right (TmVar idx, (Element xs (reflexive {rel = LTE})))
+  parseTerm context (TLambda :: (TVar name) :: TColon :: xs) (Access acc) = do (type, (Element (TDot :: ys) residSmaller)) <- parseType xs (acc xs (lteSuccRight $ lteSuccRight $ (reflexive {rel = LTE})))
                                                                                 | _ => Left "Expected '.'"
                                                                                (body, (Element resid residSmaller')) <- parseWhole (addBinding context name type) ys (acc ys (lteSuccLeft $ lteSuccRight $ lteSuccRight $ lteSuccRight residSmaller))
-                                                                               pure (TmAbs name type body, (Element resid (lteTransitive residSmaller' (lteSuccLeft $ lteSuccLeft $ lteSuccRight $ lteSuccRight $ lteSuccRight residSmaller))))
-  parseTerm context (TTrue :: xs) (Access acc) = Right (TmTrue, (Element xs lteRefl))
-  parseTerm context (TFalse :: xs) (Access acc) = Right (TmFalse, (Element xs lteRefl))
-  parseTerm context (TIf :: xs) (Access acc) = do (gTerm, (Element (TThen :: gResid) gSmaller)) <- parseWhole context xs (acc xs lteRefl)
+                                                                               pure (TmAbs name type body, (Element resid (transitive {rel=LTE} residSmaller' (lteSuccLeft $ lteSuccLeft $ lteSuccRight $ lteSuccRight $ lteSuccRight residSmaller))))
+  parseTerm context (TTrue :: xs) (Access acc) = Right (TmTrue, (Element xs (reflexive {rel = LTE})))
+  parseTerm context (TFalse :: xs) (Access acc) = Right (TmFalse, (Element xs (reflexive {rel = LTE})))
+  parseTerm context (TIf :: xs) (Access acc) = do (gTerm, (Element (TThen :: gResid) gSmaller)) <- parseWhole context xs (acc xs (reflexive {rel = LTE}))
                                                     | _ => Left "Expected then"
                                                   (tTerm, (Element (TElse :: tResid) tSmaller)) <- parseWhole context gResid (acc gResid (lteSuccLeft $ lteSuccRight gSmaller))
                                                     | _ => Left "Expected else"
-                                                  (eTerm, (Element eResid eSmaller)) <- parseWhole context tResid (acc tResid (lteTransitive (lteSuccLeft $ lteSuccRight tSmaller) (lteSuccLeft $ lteSuccRight gSmaller)))
-                                                  pure (TmIf gTerm tTerm eTerm, (Element eResid (lteTransitive (lteSuccRight eSmaller) (lteTransitive (lteSuccLeft $ lteSuccRight tSmaller) (lteSuccLeft $ lteSuccRight gSmaller)))))
-  parseTerm context (TLParen :: xs) (Access acc) = do (term, (Element (TRParen :: resid) residSmaller)) <- parseWhole context xs (acc xs lteRefl)
+                                                  (eTerm, (Element eResid eSmaller)) <- parseWhole context tResid (acc tResid (transitive {rel=LTE} (lteSuccLeft $ lteSuccRight tSmaller) (lteSuccLeft $ lteSuccRight gSmaller)))
+                                                  pure (TmIf gTerm tTerm eTerm, (Element eResid (transitive {rel=LTE} (lteSuccRight eSmaller) (transitive {rel=LTE} (lteSuccLeft $ lteSuccRight tSmaller) (lteSuccLeft $ lteSuccRight gSmaller)))))
+  parseTerm context (TLParen :: xs) (Access acc) = do (term, (Element (TRParen :: resid) residSmaller)) <- parseWhole context xs (acc xs (reflexive {rel = LTE}))
                                                        | _ => Left "Expected ')'"
                                                       Right (term, (Element resid (lteSuccLeft $ lteSuccRight residSmaller)))
   parseTerm _ _ _ = Left "Invalid Term"

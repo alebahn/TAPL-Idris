@@ -6,7 +6,7 @@ import Data.Fin
 import Data.Fin.Order
 import Decidable.Equality
 import Decidable.Decidable
-import Decidable.Order
+--import Decidable.Order
 import Data.Rel
 import Data.Fun
 import Data.Fuel
@@ -202,7 +202,7 @@ succNotLteSelf (FS c) (FS k) (FromNatPrf (LTESucc lte)) eq = succNotLteSelf c k 
 shiftUpCanShiftDown : (c : Fin (S n)) -> (term : Term n) -> CanShiftDown c (shiftUp c term)
 shiftUpCanShiftDown c (TmVar k) with (decide c (weaken k) {k=2} {ts=[Fin (S n), Fin (S n)]} {p=FinLTE})
   shiftUpCanShiftDown c (TmVar k) | (Yes prf) = VarCanShiftDown (FS k) c (succNotLteSelf c k prf)
-  shiftUpCanShiftDown c (TmVar k) | (No contra) = VarCanShiftDown (weaken k) c (\eq => contra $ rewrite eq in FromNatPrf lteRefl)
+  shiftUpCanShiftDown c (TmVar k) | (No contra) = VarCanShiftDown (weaken k) c (\eq => contra $ rewrite eq in FromNatPrf (reflexive {rel=LTE}))
 shiftUpCanShiftDown c (TmAbs nm ty body) = AbsCanShiftDown (shiftUpCanShiftDown (FS c) body)
 shiftUpCanShiftDown c (TmApp x y) = AppCanShiftDown (shiftUpCanShiftDown c x) (shiftUpCanShiftDown c y)
 shiftUpCanShiftDown c TmTrue = TrueCanShiftDown

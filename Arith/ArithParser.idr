@@ -1,6 +1,6 @@
 module ArithParser
 
-import Data.Strings
+import Data.String
 import Data.Vect
 import Decidable.Equality
 import Control.WellFounded
@@ -30,19 +30,19 @@ Show Term where
   show (TmIszero t) = "iszero " ++ (show t)
 
 parseTermStep : (tokens : List Token) -> ((tokens' : List Token) -> (tokens' `Smaller` tokens) -> Either String (Term, (resid : List Token ** resid `Smaller` tokens'))) -> Either String (Term, (resid : List Token ** resid `Smaller` tokens))
-parseTermStep (TTrue :: xs) _ = Right (TmTrue, (xs ** lteRefl))
-parseTermStep (TFalse :: xs) _ = Right (TmFalse, (xs ** lteRefl))
-parseTermStep (TZero :: xs) _ = Right (TmZero, (xs ** lteRefl))
-parseTermStep (TSucc :: xs) f = do (term, (resid ** prf)) <- f xs lteRefl
+parseTermStep (TTrue :: xs) _ = Right (TmTrue, (xs ** (reflexive {rel=LTE})))
+parseTermStep (TFalse :: xs) _ = Right (TmFalse, (xs ** (reflexive {rel=LTE})))
+parseTermStep (TZero :: xs) _ = Right (TmZero, (xs ** (reflexive {rel=LTE})))
+parseTermStep (TSucc :: xs) f = do (term, (resid ** prf)) <- f xs (reflexive {rel=LTE})
                                    pure (TmSucc term, (resid ** lteSuccRight prf))
-parseTermStep (TPred :: xs) f = do (term, (resid ** prf)) <- f xs lteRefl
+parseTermStep (TPred :: xs) f = do (term, (resid ** prf)) <- f xs (reflexive {rel=LTE})
                                    pure (TmPred term, (resid ** lteSuccRight prf))
-parseTermStep (TIszero :: xs) f = do (term, (resid ** prf)) <- f xs lteRefl
+parseTermStep (TIszero :: xs) f = do (term, (resid ** prf)) <- f xs (reflexive {rel=LTE})
                                      pure (TmIszero term, (resid ** lteSuccRight prf))
-parseTermStep (TIf :: xs) f = do (guard, (gResid ** gPrf)) <- f xs lteRefl
+parseTermStep (TIf :: xs) f = do (guard, (gResid ** gPrf)) <- f xs (reflexive {rel=LTE})
                                  (thenTerm, (tResid ** tPrf)) <- f gResid (lteSuccRight gPrf)
-                                 (elseTerm, (eResid ** ePrf)) <- f tResid (lteTransitive (lteSuccRight tPrf) (lteSuccRight gPrf))
-                                 pure (TmIf guard thenTerm elseTerm, (eResid ** (lteTransitive (lteSuccRight ePrf) (lteTransitive (lteSuccRight tPrf) (lteSuccRight gPrf)))))
+                                 (elseTerm, (eResid ** ePrf)) <- f tResid (transitive {rel=LTE} (lteSuccRight tPrf) (lteSuccRight gPrf))
+                                 pure (TmIf guard thenTerm elseTerm, (eResid ** (transitive {rel=LTE} (lteSuccRight ePrf) (transitive {rel=LTE} (lteSuccRight tPrf) (lteSuccRight gPrf)))))
 parseTermStep _ _ = Left "Invalid Term"
 
 parseTerm : (tokens : List Token) -> Either String Term

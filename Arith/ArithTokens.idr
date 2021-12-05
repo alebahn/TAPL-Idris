@@ -1,7 +1,7 @@
 module ArithTokens
 
 import Data.Fin
-import Data.Strings
+import Data.String
 import Data.List1
 
 %default total

@@ -61,12 +61,12 @@ oneStep (TmSucc x) with (isNumeric x)
   oneStep (TmSucc x) | (No _) = do (newX ** prfSmaller) <- oneStep x
                                    pure (TmSucc newX ** LTESucc prfSmaller)
 oneStep (TmPred x) with (isNumeric x)
-  oneStep (TmPred TmZero) | (Yes ZeroIsNumeric) = Just (TmZero ** lteRefl)
-  oneStep (TmPred (TmSucc n)) | (Yes (SuccIsNumeric _)) = Just (n ** lteSuccRight lteRefl)
+  oneStep (TmPred TmZero) | (Yes ZeroIsNumeric) = Just (TmZero ** (reflexive {rel=LTE}))
+  oneStep (TmPred (TmSucc n)) | (Yes (SuccIsNumeric _)) = Just (n ** lteSuccRight (reflexive {rel=LTE}))
   oneStep (TmPred x) | (No _) = do (newX ** prfSmaller) <- oneStep x
                                    pure (TmPred newX ** LTESucc prfSmaller)
 oneStep (TmIszero x) with (isNumeric x)
-  oneStep (TmIszero TmZero) | (Yes ZeroIsNumeric) = Just (TmTrue ** lteRefl)
+  oneStep (TmIszero TmZero) | (Yes ZeroIsNumeric) = Just (TmTrue ** (reflexive {rel=LTE}))
   oneStep (TmIszero (TmSucc _)) | (Yes (SuccIsNumeric _)) = Just (TmFalse ** LTESucc (LTESucc LTEZero))
   oneStep (TmIszero x) | (No _) = do (newX ** prfSmaller) <- oneStep x
                                      pure (TmIszero newX ** LTESucc prfSmaller)
