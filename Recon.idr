@@ -6,8 +6,9 @@ import Data.Nat
 import Data.Vect
 import Data.Vect.Elem
 import Data.Stream
-import Data.List.Elem
 import Data.List
+import Data.List.Elem
+import Data.List.Quantifiers
 import Decidable.Equality
 import Control.WellFounded
 
@@ -19,7 +20,7 @@ data Ty = TyBool | TyArr Ty Ty | TyId String | TyNat
 
 maybeEq : (x, y : Ty) -> Maybe (x = y)
 maybeEq TyBool TyBool = Just Refl
-maybeEq (TyArr w x) (TyArr y z) = 
+maybeEq (TyArr w x) (TyArr y z) =
   do Refl <- maybeEq w y
      Refl <- maybeEq x z
      Just Refl
@@ -147,7 +148,7 @@ removeKeyHelpStillMissing (AddElement newVal set valIsNew) key (acc ** accMissin
   removeKeyHelpStillMissing (AddElement newVal set valIsNew) newVal (acc ** accMissing) {subs = sub :: subs} (AddDisjoint accMissingVal accDisjointSet) missing | (Right Refl) =
     let (keysMissingVal, ConsMissing val newVal _ setMissingVal) = appendMissingToBothMissing (AddElement newVal set valIsNew) (AddDisjoint accMissingVal accDisjointSet) missing in
         appendMissingNew set setMissingVal accDisjointSet keysMissingVal
-  removeKeyHelpStillMissing (AddElement newVal set valIsNew) key (acc ** accMissing) {subs = sub :: subs} (AddDisjoint accMissingVal accDisjointSet) missing | (Left neq) = 
+  removeKeyHelpStillMissing (AddElement newVal set valIsNew) key (acc ** accMissing) {subs = sub :: subs} (AddDisjoint accMissingVal accDisjointSet) missing | (Left neq) =
     removeKeyHelpStillMissing set key _ (snocDisjoint accDisjointSet valIsNew {valIsNew = accMissingVal}) missing
 
 removeKeyStillMissing : (s : Substitution) -> (key : String) -> SetMissing val s.keys -> SetMissing val (fst (removeKey s key)).keys
@@ -237,7 +238,7 @@ inBoundsLeftAppendImpliesIndexIsOfLeftAppend (S ind) (AddElement head set headIs
 
 inBoundsPlusLengthIpliesIndexRightAppend : (ind : Nat) -> (keys, keys2 : BindingKeys) -> (vals : Vect (length keys) t) -> (vals2 : Vect (length keys2) t) -> {disjoint : Disjoint keys keys2} ->
                                            (inBounds : InBounds (length keys + ind) (append keys keys2 disjoint)) ->
-                                           (inBounds2 : InBounds ind keys2 ** 
+                                           (inBounds2 : InBounds ind keys2 **
                                                         index (inBoundsToFinLength (length keys + ind) {ok = inBounds}) (rewrite lengthAppendIsSumLength keys keys2 {disjoint} in vals ++ vals2)
                                                       = index (inBoundsToFinLength ind {ok = inBounds2}) vals2)
 inBoundsPlusLengthIpliesIndexRightAppend ind EmptySet keys2 [] vals2 inBounds = (rewrite sym $ appendEmptyLeftNeutral keys2 in inBounds ** rewrite appendEmptyLeftNeutral keys2 {disjoint} in Refl)
@@ -278,7 +279,7 @@ removeKeyHelpIndSameSub (AddElement newVal set valIsNew) (sub :: subs) key (acc 
       rewrite cong fst prf in
       rewrite sym removedPrf in
       let (inBounds'' ** indexSame) = (inBoundsPlusLengthIpliesIndexRightAppend indSet acc.keys set acc.subs subs (rewrite cong fst (sym prf) in inBounds')) in
-          trans indexSame 
+          trans indexSame
                 (rewrite appendConsRightIsAppendSnocLeft acc.subs sub subs in
                  rewrite sym $ lengthSnocSucc acc.keys newVal accMissingNewVal in
                  rewrite inBoundsUnique set indSet {ok = inBounds''} {ok' = inBoundsSet} in
@@ -313,7 +314,7 @@ compProofSub a (MkSub keys subs) with (removeKeys a keys) proof removedPrf
         let ((ind' ** inBounds' ** isIndex') ** removeKeysIndPrf) = withProof $ indToRemoveKeysInd (MkSub keysA subsA) keys varNotInKeys ind indInBounds isIndex
             (inBounds'' ** isIndex'') = indToAppendRightInd keys keysRemoved.keys {disjoint = symDisjoint disjoint} ind' (rewrite sym $ cong fst removedPrf in inBounds') (rewrite sym $ cong fst removedPrf in isIndex')in
             rewrite getIndexUniqueRight (append keys keysRemoved.keys (symDisjoint disjoint)) {var} (length keys + _) inBounds'' isIndex'' in
-                    trans (indexLenOffNatAppendSame ind' (replace {p = (\x => InBounds ind' x.keys)} (cong fst removedPrf) inBounds') inBounds'') 
+                    trans (indexLenOffNatAppendSame ind' (replace {p = (\x => InBounds ind' x.keys)} (cong fst removedPrf) inBounds') inBounds'')
                     (removeKeysIndSameSub _ _ _ ind indInBounds ind' inBounds' removeKeysIndPrf (cong fst removedPrf))
       compProofSub (MkSub keysA subsA) (MkSub keys subs) | (MkDPair keysRemoved disjoint) | (Left varNotInKeys) | (Left varNotInKeysA) =
         rewrite getIndexUniqueLeft (append keys keysRemoved.keys (symDisjoint disjoint)) {var} (appendMissingNew {x = keys} keysRemoved.keys (rewrite (sym $ cong fst removedPrf) in removeKeysStillMissing (MkSub keysA subsA) keys varNotInKeysA) (symDisjoint disjoint) varNotInKeys) in Refl
@@ -332,11 +333,18 @@ singleSub : String -> Ty -> Substitution
 singleSub key ty = MkSub (AddElement key EmptySet EmptyMissing) [ty]
 
 replaceConstraints : Substitution -> Constr -> Constr
-replaceConstraints sub = map (\(x, y) => (replace sub x, replace sub y))
+--replaceConstraints sub = map (\(x, y) => (replace sub x, replace sub y))
+replaceConstraints sub [] = []
+replaceConstraints sub ((x, y) :: xs) = (replace sub x, replace sub y) :: (replaceConstraints sub xs)
 
---replaceConstraints sub [] = []
---replaceConstraints sub ((x, y) :: xs) = (replace sub x, replace sub y) :: (replaceConstraints sub xs)
 --replaceConstraints sub (MkConstr xs) = MkConstr $ map (\(x, y) => (replace sub x, replace sub y)) xs
+
+replaceConstraintsProof : (a, b : Substitution) -> (con : Constr) -> replaceConstraints (a . b) con = replaceConstraints a (replaceConstraints b con)
+replaceConstraintsProof a b [] = Refl
+replaceConstraintsProof a b ((x, y) :: xs) = rewrite compProof a b x in
+                                             rewrite compProof a b y in
+                                             rewrite replaceConstraintsProof a b xs in
+                                                     Refl
 
 Sized Ty where
   size (TyArr x y) = S (size x + size y)
@@ -388,8 +396,8 @@ tyHasVariablesSameVariables BoolHasNoVariable BoolHasNoVariable = Refl
 tyHasVariablesSameVariables NatHasNoVariable NatHasNoVariable = Refl
 tyHasVariablesSameVariables IdHasFreeVariable IdHasFreeVariable = Refl
 tyHasVariablesSameVariables (ArrowHasFreeVariables wHasFree xHasFree) (ArrowHasFreeVariables yHasFree zHasFree) =
-  rewrite tyHasVariablesSameVariables wHasFree yHasFree in 
-  rewrite tyHasVariablesSameVariables xHasFree zHasFree in 
+  rewrite tyHasVariablesSameVariables wHasFree yHasFree in
+  rewrite tyHasVariablesSameVariables xHasFree zHasFree in
           Refl
 
 data NotArrow : Ty -> Type where
@@ -437,7 +445,7 @@ mutual
   freeViewArrow : (constr : Constr) -> (0 acc : SizeAccessible @{Recon.complSize} constr) -> (keys : BindingKeys ** FreeViewArrow constr keys)
   freeViewArrow [] _ = (EmptySet ** FVAEmpty)
   freeViewArrow ((x, y) :: xs) acc with (decEq x y)
-    freeViewArrow ((x, x) :: xs) (Access rec) | (Yes Refl) = 
+    freeViewArrow ((x, x) :: xs) (Access rec) | (Yes Refl) =
       let (xsVars ** xsPrf) = freeViewArrow xs (rec xs (rewrite sym $ plusOneSucc (size_sum xs) in (plusLteMonotoneRight (size_sum xs) 1 (size x + size x) (transitive {rel=LTE} (sizeTyGTE1 x) (lteAddRight (size x)))))) in
           (xsVars ** FVAHeadEq xsPrf)
     freeViewArrow ((TyArr w x, TyArr y z) :: xs) (Access rec) | (No contra) =
@@ -531,8 +539,8 @@ replaceConstraintsSub l tt ((TyArr w x, TyArr y z) :: xs) newFree ttKeys xsKeys 
 replaceConstraintsSub l tt ((x, y) :: xs) newFree ttKeys (union (union xKeys yKeys) xsKeys) ttHasKeys (FVAOther xHasKeys yHasKeys fva neq notArrows) fvaNew lNotInTtKeys =
   let (newFree' ** fvaNew') = freeViewArrow _ (sizeAccessible @{Recon.complSize} _)
       (missing', sub') = replaceConstraintsSub l tt xs newFree' ttKeys xsKeys ttHasKeys fva fvaNew' lNotInTtKeys
-      (newXKeys ** newXHasFree) = tyHasFreeVariables _ 
-      (newYKeys ** newYHasFree) = tyHasFreeVariables _ 
+      (newXKeys ** newXHasFree) = tyHasFreeVariables _
+      (newYKeys ** newYHasFree) = tyHasFreeVariables _
       (newXKeysMissing, newXSub) = replaceMissingAndSub l x tt xKeys ttKeys newXKeys xHasKeys ttHasKeys lNotInTtKeys newXHasFree
       (newYKeysMissing, newYSub) = replaceMissingAndSub l y tt yKeys ttKeys newYKeys yHasKeys ttHasKeys lNotInTtKeys newYHasFree
       newFreeSubUnion = headAndTailSub _ _ _ newXKeys newYKeys newFree' newFree newXHasFree newYHasFree fvaNew' fvaNew
@@ -566,34 +574,78 @@ replaceConstraintsSmaller2 l x xs newFree xKeys xsKeys xHasKeys fvaTail fvaNew l
       lteRearanged = subsetSmallerOrSameSize subRearanged
    in transitive {rel=LTE} smallerOther lteRearanged
 
-unify_total : (freeVariables : BindingKeys) -> (0 accFree : SizeAccessible freeVariables) -> (constr : Constr) -> (FreeViewArrow constr freeVariables) -> Maybe Substitution
-unify_total EmptySet accFree [] FVAEmpty = Just emptySub
-unify_total freeVariables accFree ((x, x) :: xs) (FVAHeadEq fvaTail) = unify_total freeVariables accFree xs fvaTail
-unify_total freeVariables accFree ((TyArr w x, TyArr y z) :: xs) (FVAArrow fvaArrow neq) = unify_total freeVariables accFree _ fvaArrow
-unify_total (union (union (AddElement l EmptySet EmptyMissing) yKeys) xsKeys) accFree ((TyId l, y) :: xs) (FVAOther IdHasFreeVariable yHasFree fvaTail neq notArrows) =
-  uthelp l yKeys xsKeys accFree y xs yHasFree fvaTail (getIndex l yKeys)
-    where
-      uthelp : (l : String) -> (yKeys, xsKeys : BindingKeys) -> (0 accFree : SizeAccessible (union (union (AddElement l EmptySet EmptyMissing) yKeys) xsKeys)) -> (y : Ty) -> (xs : Constr) -> (yHasFree : TyHasFreeVariables y yKeys) -> (fvaTail : FreeViewArrow xs xsKeys) -> GetIndexData l yKeys -> Maybe Substitution
-      uthelp l yKeys xsKeys (Access rec) y xs yHasFree fvaTail (Left lNotInYKeys) = do
-        let (newTail ** newTailPrf) = withProof (replaceConstraints (singleSub l y) xs)
-        let (newTailVars ** vfaNewTail) = freeViewArrow newTail (sizeAccessible @{Recon.complSize} newTail)
-        let newSmaller = replaceConstraintsSmaller l y xs newTailVars yKeys xsKeys yHasFree fvaTail (rewrite sym newTailPrf in vfaNewTail) lNotInYKeys
-        subs <- unify_total newTailVars (rec newTailVars newSmaller) newTail vfaNewTail
-        Just (subs . (singleSub l y))
-      uthelp l yKeys xsKeys (Access rec) y xs yHasFree fvaTail (Right _) = Nothing
-unify_total (union (union xKeys (AddElement l EmptySet EmptyMissing)) xsKeys) accFree ((x, TyId l) :: xs) (FVAOther xHasFree IdHasFreeVariable fvaTail neq notArrows) =
-  uthelp l xKeys xsKeys accFree x xs xHasFree fvaTail (getIndex l xKeys)
-    where
-      uthelp : (l : String) -> (xKeys, xsKeys : BindingKeys) -> (0 accFree : SizeAccessible (union (union xKeys (AddElement l EmptySet EmptyMissing)) xsKeys)) -> (x : Ty) -> (xs : Constr) -> (xHasFree : TyHasFreeVariables x xKeys) -> (fvaTail : FreeViewArrow xs xsKeys) -> GetIndexData l xKeys -> Maybe Substitution
-      uthelp l xKeys xsKeys (Access rec) x xs xHasFree fvaTail (Left lNotInXKeys) = do
-        let (newTail ** newTailPrf) = withProof (replaceConstraints (singleSub l x) xs)
-        let (newTailVars ** vfaNewTail) = freeViewArrow newTail (sizeAccessible @{Recon.complSize} newTail)
-        let newSmaller = replaceConstraintsSmaller2 l x xs newTailVars xKeys xsKeys xHasFree fvaTail (rewrite sym newTailPrf in vfaNewTail) lNotInXKeys
-        subs <- unify_total newTailVars (rec newTailVars newSmaller) newTail vfaNewTail
-        Just (subs . (singleSub l x))
-      uthelp l xKeys xsKeys (Access rec) x xs yHasFree fvaTail (Right _) = Nothing
-unify_total (union (union xKeys yKeys) xsKeys) accFree ((_, _) :: xs) (FVAOther xHasFree yHasFree fvaTail neq notArrows) = Nothing
+DoesUnify : Substitution -> Constr -> Type
+DoesUnify sub xs = All (uncurry (===)) (replaceConstraints sub xs)
 
-unify : Constr -> Maybe Substitution
+replaceMissingNeutral : {l : String} -> {x : Ty} -> TyHasFreeVariables x keys -> SetMissing l keys -> replace (MkSub (AddElement l EmptySet EmptyMissing) [y]) x = x
+replaceMissingNeutral BoolHasNoVariable _ = Refl
+replaceMissingNeutral NatHasNoVariable _ = Refl
+replaceMissingNeutral IdHasFreeVariable (ConsMissing l var elemNotHead _) with (eitherNeqEq var l)
+  replaceMissingNeutral IdHasFreeVariable (ConsMissing l var elemNotHead _) | (Left neq') = Refl
+  replaceMissingNeutral IdHasFreeVariable (ConsMissing l var elemNotHead _) | (Right eq) = void $ neqToNotEqual elemNotHead (sym eq)
+replaceMissingNeutral (ArrowHasFreeVariables xHasFree yHasFree) missing =
+  rewrite replaceMissingNeutral xHasFree (missingUnionMissingLeft _ _ missing) {y} in
+  rewrite replaceMissingNeutral yHasFree (missingUnionMissingRight _ _ missing) {y} in
+          Refl
+
+replaceSingleIsReplaced : {l : String} -> replace (MkSub (AddElement l EmptySet EmptyMissing) [y]) (TyId l) = y
+replaceSingleIsReplaced with (eitherNeqEq l l)
+  replaceSingleIsReplaced | (Left neq) = void $ neqToNotEqual neq Refl
+  replaceSingleIsReplaced | (Right _) = Refl
+
+leftOrRightKeys : Either () () -> (l : String) -> (ttKeys, xsKeys : BindingKeys) -> BindingKeys
+leftOrRightKeys (Left ()) l ttKeys xsKeys = union (union (AddElement l EmptySet EmptyMissing) ttKeys) xsKeys
+leftOrRightKeys (Right ()) l ttKeys xsKeys = union (union ttKeys (AddElement l EmptySet EmptyMissing)) xsKeys
+
+leftOrRightConstr : Either () () -> (l : String) -> (tt : Ty) -> (xs : Constr) -> Constr
+leftOrRightConstr (Left ()) l tt xs = (TyId l, tt) :: xs
+leftOrRightConstr (Right ()) l tt xs = (tt, TyId l) :: xs
+
+replaceConstraintsSmallerBoth : (l : String) -> (tt : Ty) -> (xs : Constr) -> (newFree, ttKeys, xsKeys : BindingKeys) -> TyHasFreeVariables tt ttKeys ->
+                                FreeViewArrow xs xsKeys -> (FreeViewArrow (replaceConstraints (MkSub (AddElement l EmptySet EmptyMissing) [tt]) xs) newFree) ->
+                                (lNotInXKeys : SetMissing l ttKeys) -> (leftOrRight : Either () ()) ->
+                                Smaller newFree (leftOrRightKeys leftOrRight l ttKeys xsKeys)
+replaceConstraintsSmallerBoth l tt xs newFree ttKeys xsKeys ttHasKeys fvaTail fvaNew lNotInTtKeys (Left ()) = replaceConstraintsSmaller l tt xs newFree ttKeys xsKeys ttHasKeys fvaTail fvaNew lNotInTtKeys
+replaceConstraintsSmallerBoth l tt xs newFree ttKeys xsKeys ttHasKeys fvaTail fvaNew lNotInTtKeys (Right ()) = replaceConstraintsSmaller2 l tt xs newFree ttKeys xsKeys ttHasKeys fvaTail fvaNew lNotInTtKeys
+
+makeUnifyLeftOrRight : (leftOrRight : Either () ()) -> (sub : Substitution) -> replace sub (TyId l) = replace sub tt -> DoesUnify sub xs -> DoesUnify sub (leftOrRightConstr leftOrRight l tt xs)
+makeUnifyLeftOrRight (Left ()) sub headSame doesUnifyTail = headSame :: doesUnifyTail
+makeUnifyLeftOrRight (Right ()) sub headSame doesUnifyTail = (sym headSame) :: doesUnifyTail
+
+mutual
+  uthelp : (l : String) -> (ttKeys, xsKeys : BindingKeys) -> (leftOrRight : Either () ()) -> (0 accFree : SizeAccessible (leftOrRightKeys leftOrRight l ttKeys xsKeys)) ->
+            (tt : Ty) -> (xs : Constr) -> (ttHasFree : TyHasFreeVariables tt ttKeys) -> (fvaTail : FreeViewArrow xs xsKeys) -> GetIndexData l ttKeys ->
+            Maybe (sub : Substitution ** DoesUnify sub (leftOrRightConstr leftOrRight l tt xs))
+            --Maybe (sub : Substitution ** DoesUnify sub ((TyId l, tt) :: xs))
+  uthelp l ttKeys xsKeys leftOrRight (Access rec) tt xs ttHasFree fvaTail (Left lNotInTtKeys) = do
+    let (newTail ** newTailPrf) = withProof (replaceConstraints (singleSub l tt) xs)
+    let (newTailVars ** vfaNewTail) = freeViewArrow newTail (sizeAccessible @{Recon.complSize} newTail)
+    let newSmaller = replaceConstraintsSmallerBoth l tt xs newTailVars ttKeys xsKeys ttHasFree fvaTail (rewrite sym newTailPrf in vfaNewTail) lNotInTtKeys leftOrRight
+    (subs ** doesUnify) <- unify_total newTailVars (rec newTailVars newSmaller) newTail vfaNewTail
+    let headSame = rewrite compProof subs (singleSub l tt) tt in
+                   rewrite compProof subs (singleSub l tt) (TyId l) in
+                   rewrite replaceMissingNeutral ttHasFree lNotInTtKeys {y=tt} in
+                   rewrite replaceSingleIsReplaced {l} {y=tt} in
+                           Refl
+    let doesUnify' = rewrite replaceConstraintsProof subs (singleSub l tt) xs in
+                     rewrite sym newTailPrf in
+                             doesUnify
+    let newDoesUnify = makeUnifyLeftOrRight leftOrRight (subs . (singleSub l tt)) headSame doesUnify' {l} {tt} {xs}
+    Just (subs . (singleSub l tt) ** newDoesUnify)
+  uthelp l ttKeys xsKeys leftOrRight accFree tt xs ttHasFree fvaTail (Right _) = Nothing
+
+  unify_total : (freeVariables : BindingKeys) -> (0 accFree : SizeAccessible freeVariables) -> (constr : Constr) -> (FreeViewArrow constr freeVariables) -> Maybe (sub : Substitution ** DoesUnify sub constr)
+  unify_total EmptySet accFree [] FVAEmpty = Just (emptySub ** [])
+  unify_total freeVariables accFree ((x, x) :: xs) (FVAHeadEq fvaTail) = do (sub ** doesUnify) <- unify_total freeVariables accFree xs fvaTail
+                                                                            Just (sub ** Refl :: doesUnify)
+  unify_total freeVariables accFree ((TyArr w x, TyArr y z) :: xs) (FVAArrow fvaArrow neq) = do (sub ** rwEQry :: rxEQrz :: doesUnify) <- unify_total freeVariables accFree _ fvaArrow
+                                                                                                Just (sub ** rewrite rwEQry in rewrite rxEQrz in Refl :: doesUnify)
+  unify_total (union (union (AddElement l EmptySet EmptyMissing) yKeys) xsKeys) accFree (((TyId l), y) :: xs) (FVAOther IdHasFreeVariable yHasFree fvaTail neq notArrows) =
+    uthelp l yKeys xsKeys (Left ()) accFree y xs yHasFree fvaTail (getIndex l yKeys)
+  unify_total (union (union xKeys (AddElement l EmptySet EmptyMissing)) xsKeys) accFree ((x, (TyId l)) :: xs) (FVAOther xHasFree IdHasFreeVariable fvaTail neq notArrows) =
+    uthelp l xKeys xsKeys (Right ()) accFree x xs xHasFree fvaTail (getIndex l xKeys)
+  unify_total (union (union xKeys yKeys) xsKeys) accFree ((_, _) :: xs) (FVAOther xHasFree yHasFree fvaTail neq notArrows) = Nothing
+
+unify : (constr : Constr) -> Maybe (sub : Substitution ** DoesUnify sub constr)
 unify xs = let (freeVariables ** freeViewArrow) = freeViewArrow xs (sizeAccessible @{Recon.complSize} xs)
             in unify_total freeVariables (sizeAccessible freeVariables) xs freeViewArrow
