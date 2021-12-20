@@ -649,3 +649,8 @@ mutual
 unify : (constr : Constr) -> Maybe (sub : Substitution ** DoesUnify sub constr)
 unify xs = let (freeVariables ** freeViewArrow) = freeViewArrow xs (sizeAccessible @{Recon.complSize} xs)
             in unify_total freeVariables (sizeAccessible freeVariables) xs freeViewArrow
+
+getPrincipal : Term 0 -> Maybe Ty
+getPrincipal term = do let (_ # (ty, constr)) = recon [] names term
+                       (unifier ** _) <- unify constr
+                       Just (replace unifier ty)
