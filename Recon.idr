@@ -654,3 +654,116 @@ getPrincipal : Term 0 -> Maybe Ty
 getPrincipal term = do let (_ # (ty, constr)) = recon [] names term
                        (unifier ** _) <- unify constr
                        Just (replace unifier ty)
+
+repContext : Substitution -> Context n -> Context n
+repContext _ [] = []
+repContext sub ((nm, ty) :: xs) = (nm, replace sub ty) :: repContext sub xs
+
+repTerm : Substitution -> Term n -> Term n
+repTerm sub (TmAbs nm ty body) = TmAbs nm (replace sub ty) (repTerm sub body)
+repTerm sub (TmApp f arg) = TmApp (repTerm sub f) (repTerm sub arg)
+repTerm sub (TmIf g t e) = TmIf (repTerm sub g) (repTerm sub t) (repTerm sub e)
+repTerm sub (TmSucc x) = TmSucc (repTerm sub x)
+repTerm sub (TmPred x) = TmPred (repTerm sub x)
+repTerm sub (TmIsZero x) = TmIsZero (repTerm sub x)
+repTerm sub (TmVar l) = TmVar l
+repTerm sub TmTrue = TmTrue
+repTerm sub TmFalse = TmFalse
+repTerm sub TmZero = TmZero
+
+namespace RecM
+  data RecRes : Type -> Type where
+    MkRecRes : (result : a) -> (1 x : HLStream String) -> RecRes a
+    RecResFail : (1 x : HLStream String) -> RecRes a
+
+  PrimRecM : Type -> Type
+  PrimRecM a = (1 x : HLStream String) -> RecRes a
+
+  export
+  data RecM : Type -> Type where
+    MkRecM : (1 fn : PrimRecM a) -> RecM a
+
+  Functor RecM where
+    map f (MkRecM fn) = MkRecM (\names => case fn names of
+                                               MkRecRes res names' => MkRecRes (f res) names'
+                                               RecResFail names' => RecResFail names')
+
+  export
+  Applicative RecM where
+    (<*>) (MkRecM fnFn) (MkRecM fnVal) = MkRecM (\names => case fnFn names of
+                                                                MkRecRes f names' => case fnVal names' of
+                                                                                          MkRecRes val names'' => MkRecRes (f val) names''
+                                                                                          RecResFail names'' => RecResFail names''
+                                                                RecResFail names' => RecResFail names')
+
+    pure result = MkRecM (MkRecRes result)
+
+  export
+  Monad RecM where
+    (>>=) (MkRecM fnA) f = MkRecM (\names => case fnA names of
+                                                  MkRecRes aa names' => let (MkRecM fnB) = f aa
+                                                                         in fnB names'
+                                                  RecResFail names' => RecResFail names')
+
+  prim_getName : PrimRecM String
+  prim_getName (name :: names) = MkRecRes name names
+
+  export
+  getName : RecM String
+  getName = MkRecM prim_getName
+
+  export
+  runRecM : HLStream String -> RecM a -> Maybe a
+  runRecM names (MkRecM fn) = case fn names of
+                                   MkRecRes result _ => Just result
+                                   RecResFail _ => Nothing
+
+  prim_fail : PrimRecM a
+  prim_fail names = RecResFail names
+
+  fail : RecM a
+  fail = MkRecM prim_fail
+
+  export
+  lift : Maybe a -> RecM a
+  lift Nothing = fail
+  lift (Just val) = pure val
+
+--assert_totals in here are because I'm too lazy to put in a well-Founded proof, and I think it's trivial that repTerm does not affect the term size
+incrRecon : Context n -> Term n -> RecM (Substitution, Ty)
+incrRecon context (TmVar x) = pure (emptySub, snd (index x context))
+incrRecon context (TmAbs nm ty body) = do (sub, bTy) <- incrRecon ((nm, ty) :: context) body
+                                          pure (sub, TyArr (replace sub ty) bTy)
+incrRecon context (TmApp f arg) = do (fSub, fTy) <- incrRecon context f
+                                     let fContext = repContext fSub context
+                                     let subbedArg = repTerm fSub arg
+                                     (aSub, aTy) <- assert_total $ incrRecon fContext subbedArg
+                                     name <- getName
+                                     (conSub ** _) <- lift $ unify [(fTy, TyArr aTy (TyId name))]
+                                     pure (conSub . aSub. fSub, replace conSub (TyId name))
+incrRecon context TmTrue = pure (emptySub, TyBool)
+incrRecon context TmFalse = pure (emptySub, TyBool)
+incrRecon context (TmIf g t e) = do (gSub, gTy) <- incrRecon context g
+                                    (gBoolSub ** _) <- lift $ unify [(gTy, TyBool)]
+                                    let gContext = repContext (gBoolSub . gSub) context
+                                    let subbedT = repTerm (gBoolSub. gSub) t
+                                    (tSub, tTy) <- assert_total $ incrRecon gContext subbedT
+                                    let tContext = repContext tSub gContext
+                                    let subbedE = repTerm (tSub . gBoolSub . gSub) e
+                                    (eSub, eTy) <- assert_total $ incrRecon tContext subbedE
+                                    let tTy' = replace eSub tTy
+                                    (teSub ** _) <- lift $ unify [(tTy', eTy)]
+                                    pure (teSub . eSub . tSub . gBoolSub . gSub, replace teSub eTy)
+incrRecon context TmZero = pure (emptySub, TyNat)
+incrRecon context (TmSucc x) = do (xSub, ty) <- incrRecon context x
+                                  (isNatSub ** _) <- lift $ unify [(ty, TyNat)]
+                                  pure (isNatSub . xSub, TyNat)
+incrRecon context (TmPred x) = do (xSub, ty) <- incrRecon context x
+                                  (isNatSub ** _) <- lift $ unify [(ty, TyNat)]
+                                  pure (isNatSub . xSub, TyNat)
+incrRecon context (TmIsZero x) = do (xSub, ty) <- incrRecon context x
+                                    (isNatSub ** _) <- lift $ unify [(ty, TyNat)]
+                                    pure (isNatSub . xSub, TyBool)
+
+runIncrRecon : Term 0 -> Maybe Ty
+runIncrRecon term = snd <$> runRecM names (incrRecon [] term)
