@@ -791,3 +791,15 @@ unionsSubsetSubsetUnion w x y z wSubX ySubZ =
 --  unionsSmallerSmaller w x EmptySet (AddElement newVal set valIsNew) wSmallery _ | (Right y) = ?unionsSmallerSmaller_rhs_3
 --unionsSmallerSmaller w x (AddElement newVal set valIsNew) EmptySet wSmallery ySmallerOrEqualZ = ?unionsSmallerSmaller_rhs_4
 --unionsSmallerSmaller w x (AddElement newVal set valIsNew) (AddElement y z v) wSmallery ySmallerOrEqualZ = ?unionsSmallerSmaller_rhs_5
+
+difference : (a, b : BindingKeys) -> (diff : BindingKeys ** (Subset diff a, Disjoint b diff))
+difference EmptySet b = (EmptySet ** (EmptySubset, EmptyDisjoint))
+difference (AddElement newVal set valIsNew) b with (isElem newVal b)
+  difference (AddElement newVal set valIsNew) b | (Left bMissingNewVal) = let (setDiff ** (sdSub, sdDisjoint)) = difference set b
+                                                                           in (AddElement newVal setDiff (missingSetMisssingSubset valIsNew sdSub) ** (ConsSubset Here (subsetAddRight sdSub), AddDisjoint bMissingNewVal sdDisjoint))
+  difference (AddElement newVal set valIsNew) b | (Right bElemNewVal) = let (setDiff ** (sdSub, sdDisjoint)) = difference set b
+                                                                         in (setDiff ** (subsetAddRight sdSub, sdDisjoint))
+
+export
+(-) : (a, b : BindingKeys) -> BindingKeys
+(-) a b = fst $ difference a b

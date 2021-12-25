@@ -81,10 +81,15 @@ data Term : Nat -> Type where
   TmSucc : Term n -> Term n
   TmPred : Term n -> Term n
   TmIsZero : Term n -> Term n
+  TmLet : (nm : String) -> (t : Term n) -> (body : Term (S n)) -> Term n
 
-Context : Nat ->Type
-Context n = Vect n (String, Ty)
+TypeScheme : Type
+TypeScheme = (n : Nat ** (Vect n String -> Ty))
 
+Context : Nat -> Type
+Context n = Vect n (String, TypeScheme)
+
+{- commented out. We will only support let polymorphism in incremental case
 recon : Context n -> (1 names : HLStream String) -> Term n -> LPair (HLStream String) (Ty, Constr)
 recon context names (TmVar x) = (names # (snd (index x context), []))
 recon context names (TmAbs nm ty body) = let (names' # (bTy, contr)) = recon ((nm, ty) :: context) names body in
@@ -105,6 +110,7 @@ recon context names (TmPred x) = let (names' # (xTy, constr)) = recon context na
                                      (names' # (TyNat, (xTy, TyNat) :: constr))
 recon context names (TmIsZero x) = let (names' # (xTy, constr)) = recon context names x in
                                      (names' # (TyBool, (xTy, TyNat) :: constr))
+                                     -}
 
 record Substitution where
   constructor MkSub
@@ -650,14 +656,16 @@ unify : (constr : Constr) -> Maybe (sub : Substitution ** DoesUnify sub constr)
 unify xs = let (freeVariables ** freeViewArrow) = freeViewArrow xs (sizeAccessible @{Recon.complSize} xs)
             in unify_total freeVariables (sizeAccessible freeVariables) xs freeViewArrow
 
+{- let polymorphism is only supported for incremental reconstruction
 getPrincipal : Term 0 -> Maybe Ty
 getPrincipal term = do let (_ # (ty, constr)) = recon [] names term
                        (unifier ** _) <- unify constr
                        Just (replace unifier ty)
+                       -}
 
 repContext : Substitution -> Context n -> Context n
 repContext _ [] = []
-repContext sub ((nm, ty) :: xs) = (nm, replace sub ty) :: repContext sub xs
+repContext sub ((nm, (n ** f)) :: xs) = (nm, (n ** (\freeVars => replace sub (f freeVars)))) :: repContext sub xs
 
 repTerm : Substitution -> Term n -> Term n
 repTerm sub (TmAbs nm ty body) = TmAbs nm (replace sub ty) (repTerm sub body)
@@ -670,6 +678,7 @@ repTerm sub (TmVar l) = TmVar l
 repTerm sub TmTrue = TmTrue
 repTerm sub TmFalse = TmFalse
 repTerm sub TmZero = TmZero
+repTerm sub (TmLet nm t body) = TmLet nm (repTerm sub t) (repTerm sub body)
 
 namespace RecM
   data RecRes : Type -> Type where
@@ -729,10 +738,35 @@ namespace RecM
   lift Nothing = fail
   lift (Just val) = pure val
 
+getNames : (n : Nat) -> RecM (Vect n String)
+getNames 0 = pure []
+getNames (S k) = do name <- getName
+                    names <- getNames k
+                    pure (name :: names)
+
+typeToTypeScheme : Ty -> TypeScheme
+typeToTypeScheme ty = (0 ** (\_ => ty))
+
+typeSchemeToType : TypeScheme -> RecM Ty
+typeSchemeToType (n ** f) = do names <- getNames n
+                               pure (f names)
+
+getContextFreeVars : Context n -> BindingKeys
+getContextFreeVars [] = EmptySet
+getContextFreeVars ((_, (0 ** f)) :: xs) = union (fst $ tyHasFreeVariables (f [])) (getContextFreeVars xs)
+getContextFreeVars ((_, ((S k) ** f)) :: xs) = getContextFreeVars xs --type schemes with actual prameters come from a let binding and let bindings can't introduce new variables
+
+genericize : Ty -> Context n -> TypeScheme
+genericize ty context = let tyVars = fst $ tyHasFreeVariables ty
+                            conVars = getContextFreeVars context
+                            uniqueVars = tyVars - conVars
+                         in (length uniqueVars ** (\newNames => replace (MkSub uniqueVars (TyId <$> newNames)) ty))
+
 --assert_totals in here are because I'm too lazy to put in a well-Founded proof, and I think it's trivial that repTerm does not affect the term size
 incrRecon : Context n -> Term n -> RecM (Substitution, Ty)
-incrRecon context (TmVar x) = pure (emptySub, snd (index x context))
-incrRecon context (TmAbs nm ty body) = do (sub, bTy) <- incrRecon ((nm, ty) :: context) body
+incrRecon context (TmVar x) = do ty <- typeSchemeToType (snd (index x context))
+                                 pure (emptySub, ty)
+incrRecon context (TmAbs nm ty body) = do (sub, bTy) <- incrRecon ((nm, typeToTypeScheme ty) :: context) body
                                           pure (sub, TyArr (replace sub ty) bTy)
 incrRecon context (TmApp f arg) = do (fSub, fTy) <- incrRecon context f
                                      let fContext = repContext fSub context
@@ -764,6 +798,12 @@ incrRecon context (TmPred x) = do (xSub, ty) <- incrRecon context x
 incrRecon context (TmIsZero x) = do (xSub, ty) <- incrRecon context x
                                     (isNatSub ** _) <- lift $ unify [(ty, TyNat)]
                                     pure (isNatSub . xSub, TyBool)
+incrRecon context (TmLet nm t body) = do (tSub, tTy) <- incrRecon context t
+                                         let tContext = repContext tSub context
+                                         let typeScheme = genericize tTy tContext
+                                         let tContext' = (nm, typeScheme) :: tContext
+                                         let subbedBody = repTerm tSub body
+                                         assert_total $ incrRecon tContext' subbedBody
 
 runIncrRecon : Term 0 -> Maybe Ty
 runIncrRecon term = snd <$> runRecM names (incrRecon [] term)
