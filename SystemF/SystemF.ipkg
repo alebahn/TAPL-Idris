@@ -1,0 +1,5 @@
+package SystemF
+
+modules = Context, Eval, Parser, SystemF, Term, Tokens, Ty, TypeCheck
+
+depends = contrib
