@@ -57,6 +57,168 @@ isValue (TmTApp x y) = No uninhabited
 isValue (TmPack x y z) = Yes PackIsValue
 isValue (TmUnpack x y) = No uninhabited
 
+Sized (HasType context t ty) where
+  size (VarHasType prf) = 1
+  size (AbsHasType bodyHasType) = S (size bodyHasType)
+  size (AppHasType x y) = (size x) + (size y)
+  size (TAbsHasType bodyHasType) = S (size bodyHasType)
+  size (TAppHasType x) = S (size x)
+  size (PackHasType x) = S (size x)
+  size (UnpackHasType x y bodyCanShiftDown) = (size x) + (size y)
+
+nTypes : {n : Nat} -> Context 0 n
+nTypes {n = 0} = emptyContext
+nTypes {n = (S k)} = addTypeBinding nTypes ""
+
+complement : {n : Nat} -> Fin n -> Fin n
+complement {n = S _} FZ = last
+complement {n = S _} (FS x) = weaken $ complement x
+
+indexTys : (ind : Fin n) -> (tys : Tys n) -> Tys (finToNat (complement ind))
+
+removeTerms : Context m n -> Context 0 n
+removeTerms EmptyContext = EmptyContext
+removeTerms (AddTerm _ _ context) = removeTerms context
+removeTerms (AddType name context) = AddType name (removeTerms context)
+
+--idk why this doesn't just reduce in the typechecker
+--subsTermsAddTerm : (tys : Tys p) ->  SubsTerms (AddTerm name tmTy tail) tys -> (BSRBuilder (Types tys) tmTy, SubsTerms tail tys)
+--subsTermsAddTerm [] subsTerms = subsTerms
+--subsTermsAddTerm (x :: xs) subsTerms = subsTerms
+
+splitSumID : {a : Nat} -> (k : Fin (a + b)) -> Either (j : Fin a ** weakenN b j = k) (j : Fin b ** shift a j = k)
+splitSumID {a = Z} k = Right (k ** Refl)
+splitSumID {a = (S n)} FZ = Left (FZ ** Refl)
+splitSumID {a = (S n)} (FS x) = case splitSumID x of
+                                     (Left (k' ** prf)) => Left (FS k' ** cong FS prf)
+                                     (Right (k' ** prf)) => Right (k' ** cong FS prf)
+
+data CanShiftDownTy : (var : Fin (S n)) -> (term : Term m (S n)) -> Type where
+  VarCanShiftDownTy : CanShiftDownTy var (TmVar ind)
+  AbsCanShiftDownTy : CanShiftDown var argTy -> CanShiftDownTy var body -> CanShiftDownTy var (TmAbs argTy body)
+  AppCanShiftDownTy : CanShiftDownTy var func -> CanShiftDownTy var arg -> CanShiftDownTy var (TmApp func arg)
+  TAbsCanShiftDownTy : CanShiftDownTy (FS var) body -> CanShiftDownTy var (TmTAbs body)
+  TAppCanShiftDownTy : CanShiftDownTy var func -> CanShiftDown var arg -> CanShiftDownTy var (TmTApp func arg)
+  PackCanShiftDownTy : CanShiftDown var ty -> CanShiftDownTy var val -> CanShiftDown var someTy -> CanShiftDownTy var (TmPack ty val someTy)
+  UnpackCanShiftDownTy : CanShiftDownTy var bindTerm -> CanShiftDownTy (FS var) bodyTerm -> CanShiftDownTy var (TmUnpack bindTerm bodyTerm)
+
+shiftDownTy : (t : Term m (S n)) -> (var : Fin (S n)) -> CanShiftDownTy var t -> Term m n
+shiftDownTy (TmVar ind) var VarCanShiftDownTy = TmVar ind
+shiftDownTy (TmAbs argTy body) var (AbsCanShiftDownTy tyCanShiftDown bodyCanShiftDown) = TmAbs (shiftDown argTy var tyCanShiftDown) (shiftDownTy body var bodyCanShiftDown)
+shiftDownTy (TmApp func arg) var (AppCanShiftDownTy funcCanShiftDown argCanShiftDown) = TmApp (shiftDownTy func var funcCanShiftDown) (shiftDownTy arg var argCanShiftDown)
+shiftDownTy (TmTAbs body) var (TAbsCanShiftDownTy bodyCanShiftDown) = TmTAbs (shiftDownTy body (FS var) bodyCanShiftDown)
+shiftDownTy (TmTApp func arg) var (TAppCanShiftDownTy funcCanShiftDown argCanShiftDown) = TmTApp (shiftDownTy func var funcCanShiftDown) (shiftDown arg var argCanShiftDown)
+shiftDownTy (TmPack ty val someTy) var (PackCanShiftDownTy tyCanShiftDown valCanShiftDown someTyCanShiftDown) = TmPack (shiftDown ty var tyCanShiftDown) (shiftDownTy val var valCanShiftDown) (shiftDown someTy var someTyCanShiftDown)
+shiftDownTy (TmUnpack bindTerm bodyTerm) var (UnpackCanShiftDownTy bindCanShiftDown bodyCanShiftDown) = TmUnpack (shiftDownTy bindTerm var bindCanShiftDown) (shiftDownTy bodyTerm (FS var) bodyCanShiftDown)
+
+
+%hint
+extractCanShiftDown : {n : _} -> (var : Fin (S n)) -> (t : Term m (S n)) -> (canShiftDown : CanShiftDownTy var t) -> (context : Context m (S n)) ->
+                      (contextCanShiftDown : CanShiftDown var context) -> (ty : Ty (S n)) -> HasType context t ty -> CanShiftDown var ty
+extractCanShiftDown var (TmVar ind) VarCanShiftDownTy context contextCanShiftDown ty (VarHasType termHasTypeInContext) = typeInContextCanShiftDown termHasTypeInContext contextCanShiftDown
+extractCanShiftDown var (TmAbs ty body) (AbsCanShiftDownTy argTyCanShift bodyCanShift) context contextCanShiftDown (TyArr ty bTy) (AbsHasType bodyHasType {name}) =
+  ArrCanShiftDown argTyCanShift (extractCanShiftDown var body bodyCanShift (addTermBinding context name ty) (addTermBindingCanShiftDown argTyCanShift contextCanShiftDown) bTy bodyHasType)
+extractCanShiftDown var (TmApp func arg) (AppCanShiftDownTy funcCanShift argCanShift) context contextCanShiftDown ty (AppHasType funcHasTy argHasTy {tArg}) =
+  let ArrCanShiftDown _ tyCanShift = extractCanShiftDown var func funcCanShift context contextCanShiftDown (TyArr tArg ty) funcHasTy
+   in tyCanShift
+extractCanShiftDown var (TmTAbs body) (TAbsCanShiftDownTy bodyCanShiftDown) context contextCanShiftDown (TyAll bTy) (TAbsHasType bodyHasTy) =
+  AllCanShiftDown (extractCanShiftDown (FS var) body bodyCanShiftDown _ (addTypeBindingCanShiftDown contextCanShiftDown) bTy bodyHasTy)
+extractCanShiftDown var (TmTApp uni arg) (TAppCanShiftDownTy funcCanShiftDown argCanShiftDown) context contextCanShiftDown (substituteFirst arg bTy) (TAppHasType funcHasType) =
+  let AllCanShiftDown bodyCanShift = extractCanShiftDown var uni funcCanShiftDown context contextCanShiftDown (TyAll bTy) funcHasType
+   in substituteFirstCanShiftDown argCanShiftDown bodyCanShift
+extractCanShiftDown var (TmPack ty some (TySome someTy)) (PackCanShiftDownTy tyCanShiftDown someCanShiftDown tySomeCanShiftDown) context contextCanShiftDown (TySome someTy) (PackHasType someHasType) =
+  tySomeCanShiftDown
+extractCanShiftDown var (TmUnpack package body) (UnpackCanShiftDownTy packageCanShiftDown bodyCanShiftDownVar) context contextCanShiftDown (shiftDown bodyType FZ bodyCanShiftDown) (UnpackHasType packageHasType bodyHasType bodyCanShiftDown {packType} {tyName} {tmName}) =
+  let SomeCanShiftDown packTyCanShiftDown = extractCanShiftDown var package packageCanShiftDown context contextCanShiftDown (TySome packType) packageHasType
+   in shiftDownCanShiftDown bodyType FZ var bodyCanShiftDown (FromNatPrf LTEZero) 
+                            (extractCanShiftDown (FS var) body bodyCanShiftDownVar (addTermBinding (addTypeBinding context tyName) tmName packType)
+                                                 (addTermBindingCanShiftDown packTyCanShiftDown (addTypeBindingCanShiftDown contextCanShiftDown)) bodyType bodyHasType)
+
+shiftDownHasTy : {n : _} -> (var : Fin (S n)) -> (t : Term m (S n)) -> (canShiftDown : CanShiftDownTy var t) -> (context : Context m (S n)) ->
+                 (contextCanShiftDown : CanShiftDown var context) -> (ty : Ty (S n)) -> (tyCanShiftDown : CanShiftDown var ty) ->
+                 HasType context t ty -> HasType (shiftDown var context contextCanShiftDown) (shiftDownTy t var canShiftDown) (shiftDown ty var tyCanShiftDown)
+shiftDownHasTy var (TmVar ind) VarCanShiftDownTy context contextCanShiftDown ty tyCanShiftDown (VarHasType termHasTypeInContext) = VarHasType (shiftDownHasTyVar termHasTypeInContext tyCanShiftDown contextCanShiftDown)
+shiftDownHasTy var (TmAbs ty body) (AbsCanShiftDownTy argTyCanShift bodyCanShift) context contextCanShiftDown (TyArr ty bTy) (ArrCanShiftDown argTyCanShift2 resTyCanShift) (AbsHasType bodyHasTy {name}) =
+  rewrite shiftDownSameIsSame ty var argTyCanShift2 argTyCanShift in
+          AbsHasType {name} $ let (contextCanShiftDown' ** eq) = addTermBindingAndShiftDownCommute var context contextCanShiftDown ty argTyCanShift {name}
+                               in rewrite eq in shiftDownHasTy var body bodyCanShift (addTermBinding context name ty) contextCanShiftDown' bTy resTyCanShift bodyHasTy
+shiftDownHasTy var (TmApp func arg) (AppCanShiftDownTy funcCanShift argCanShift) context contextCanShiftDown ty tyCanShiftDown (AppHasType funcHasType argHasType {tArg}) =
+  AppHasType {tArg = (shiftDown tArg var (extractCanShiftDown var arg argCanShift context contextCanShiftDown tArg argHasType))}
+             (shiftDownHasTy var func funcCanShift context contextCanShiftDown (TyArr tArg ty) (ArrCanShiftDown _ tyCanShiftDown) funcHasType)
+             (shiftDownHasTy var arg argCanShift context contextCanShiftDown tArg _ argHasType)
+shiftDownHasTy var (TmTAbs body) (TAbsCanShiftDownTy bodyCanShift) context contextCanShiftDown (TyAll bTy) (AllCanShiftDown bTyCanShiftDown) (TAbsHasType bodyHasType {name}) =
+  TAbsHasType {name} (rewrite shiftDownAddTypeCommute context contextCanShiftDown {name} in
+                              shiftDownHasTy (FS var) body bodyCanShift (addTypeBinding context name) _  bTy bTyCanShiftDown bodyHasType)
+shiftDownHasTy var (TmTApp uni arg) (TAppCanShiftDownTy uniCanShiftDown argcanShiftDown) context contextCanShiftDown (substituteFirst arg bTy) tyCanShiftDown (TAppHasType uniHasType) =
+  let (AllCanShiftDown bTyCanShiftDown) = extractCanShiftDown var uni uniCanShiftDown context contextCanShiftDown (TyAll bTy) uniHasType
+      shiftedUniHasTy = shiftDownHasTy var uni uniCanShiftDown context contextCanShiftDown (TyAll bTy) (AllCanShiftDown bTyCanShiftDown) uniHasType
+   in rewrite shiftDownAndSubstituteFirstCommute var arg bTy tyCanShiftDown argcanShiftDown bTyCanShiftDown in TAppHasType shiftedUniHasTy {arg=shiftDown arg var argcanShiftDown}
+shiftDownHasTy var (TmPack ty some (TySome someTy)) canShiftDown context contextCanShiftDown (TySome someTy) tyCanShiftDown (PackHasType x) = ?shiftDownHasTy_rhs_5
+shiftDownHasTy var (TmUnpack package body) canShiftDown context contextCanShiftDown (shiftDown bodyType FZ bodyCanShiftDown) tyCanShiftDown (UnpackHasType x y bodyCanShiftDown) = ?shiftDownHasTy_rhs_6
+
+--addTermBindingAndShiftDownCommute : (canShiftDown' : CanShiftDown ind (addTermBinding context name ty) ** addTermBinding (shiftDown ind context canShiftDown) name (shiftDown ty ind tyCanShift) = shiftDown ind (addTermBinding context name ty) canShiftDown')
+
+--AbsHasType : HasType (addTermBinding context name ty) body bTy -> HasType context (TmAbs ty body) (TyArr ty bTy)
+
+substituteTy : (var : Fin (S n)) -> (replacement : Ty (S n)) -> (canShiftDown : CanShiftDown var replacement) -> (body : Term m (S n)) -> (context : Context m (S n)) -> (ty : Ty (S n)) -> HasType context body ty ->
+               (term : Term m (S n) ** (CanShiftDownTy var term, HasType context term (fst $ substitute var replacement canShiftDown ty)))
+
+substituteTyFirst : {n : _} -> (replacement : Ty n) -> (body : Term m (S n)) -> (context : Context m n) -> (ty : Ty (S n)) -> HasType context (TmTAbs body) (TyAll ty) ->
+                    (term : Term m n ** HasType context term (substituteFirst replacement ty))
+--substituteTyFirst replacement body context ty (TAbsHasType {name} bodyHasType) =
+--  let (newBody ** (canShift, hasType)) = substituteTy FZ (shiftUp replacement 1 FZ) (shiftUpCanShiftDown replacement FZ) body (addTypeBinding context name) ty bodyHasType
+--      hasType' = shiftDownHasTy FZ newBody canShift (addTypeBinding context name) addTypeBindingCanShiftDownFZ
+--        (fst $ substitute FZ (shiftUp replacement 1 FZ) (shiftUpCanShiftDown replacement FZ) ty)
+--        (snd $ substitute FZ (shiftUp replacement 1 FZ) (shiftUpCanShiftDown replacement FZ) ty)
+--        hasType
+--   in (shiftDownTy newBody FZ canShift ** rewrite sym $ shiftDownAddTypeIsId context {name} in hasType')
+
+oneStep : (t : Term 0 0) -> (ty : Ty 0) -> HasType Context.emptyContext t ty -> Not (IsValue t) -> (tOut : Term 0 0 ** HasType Context.emptyContext tOut ty)
+oneStep (TmVar ind) ty hasType notValue = absurd ind
+oneStep (TmAbs x body) ty hasType notValue = void $ notValue AbsIsValue
+oneStep (TmTAbs body) ty hasType notValue = void $ notValue TAbsIsValue
+oneStep (TmPack x y z) ty hasType notValue = void $ notValue PackIsValue
+oneStep (TmApp func arg) ty (AppHasType funcHasType argHasType {tArg}) _ with (isValue func)
+  oneStep (TmApp (TmAbs tArg body) arg) ty (AppHasType (AbsHasType bodyHasType) argHasType {tArg = tArg}) _ | (Yes AbsIsValue) with (isValue arg)
+    oneStep (TmApp (TmAbs tArg body) arg) ty (AppHasType (AbsHasType bodyHasType) argHasType {tArg = tArg}) _ | (Yes AbsIsValue) | (Yes prf) = ?oneStep_rhs_0 -- substitute
+    oneStep (TmApp (TmAbs tArg body) arg) ty (AppHasType (AbsHasType bodyHasType) argHasType {tArg = tArg}) _ | (Yes AbsIsValue) | (No contra) =
+      let (arg' ** argHasType') = oneStep arg tArg argHasType contra
+       in (TmApp (TmAbs tArg body) arg' ** AppHasType (AbsHasType bodyHasType) argHasType')
+  oneStep (TmApp (TmTAbs body) arg) ty (AppHasType funcHasType argHasType {tArg = tArg}) _ | (Yes TAbsIsValue) = absurd funcHasType
+  oneStep (TmApp (TmPack aTy body someTy) arg) ty (AppHasType funcHasType argHasType {tArg = tArg}) _ | (Yes PackIsValue) = absurd funcHasType
+  oneStep (TmApp func arg) ty (AppHasType funcHasType argHasType {tArg = tArg}) _ | (No contra) =
+    let (func' ** funcHasType') = oneStep func (TyArr tArg ty) funcHasType contra
+     in (TmApp func' arg ** AppHasType funcHasType' argHasType)
+oneStep (TmTApp func tyArg) (substituteFirst tyArg bTy) (TAppHasType funcHasType) _ with (isValue func)
+  oneStep (TmTApp (TmAbs ty body) tyArg) (substituteFirst tyArg bTy) (TAppHasType funcHasType) _ | (Yes AbsIsValue) = absurd funcHasType
+  oneStep (TmTApp (TmTAbs body) tyArg) (substituteFirst tyArg bTy) (TAppHasType funcHasType) _ | (Yes TAbsIsValue) = substituteTyFirst tyArg body Context.emptyContext bTy funcHasType
+  oneStep (TmTApp (TmPack aTy body ty) tyArg) (substituteFirst tyArg bTy) (TAppHasType funcHasType) _ | (Yes PackIsValue) = absurd funcHasType
+  oneStep (TmTApp func tyArg) (substituteFirst tyArg bTy) (TAppHasType funcHasType) _ | (No contra) =
+    let (func' ** funcHasType') = oneStep func (TyAll bTy) funcHasType contra
+     in (TmTApp func' tyArg ** TAppHasType funcHasType')
+oneStep (TmUnpack bind body) ty hasType _ with (isValue bind)
+  oneStep (TmUnpack (TmAbs argTy body) letBody) (shiftDown bodyType FZ bodyCanShiftDown) (UnpackHasType bindHasType bodyHasType bodyCanShiftDown) _ | (Yes AbsIsValue) = absurd bindHasType
+  oneStep (TmUnpack (TmTAbs body) letBody) (shiftDown bodyType FZ bodyCanShiftDown) (UnpackHasType bindHasType bodyHasType bodyCanShiftDown) _ | (Yes TAbsIsValue) = absurd bindHasType
+  oneStep (TmUnpack (TmPack aTy packBody someTy) body) (shiftDown bodyType FZ bodyCanShiftDown) (UnpackHasType bindHasType bodyHasType bodyCanShiftDown) _ | (Yes PackIsValue) = ?oneStep_rhs_7 --substitute
+  oneStep (TmUnpack bind body) (shiftDown bodyType FZ bodyCanShiftDown) (UnpackHasType bindHasType bodyHasType bodyCanShiftDown {packType}) _ | (No contra) =
+    let (bind' ** bindHasType') = oneStep bind (TySome packType) bindHasType contra
+     in (TmUnpack bind' body ** UnpackHasType bindHasType' bodyHasType bodyCanShiftDown)
+
+-- substituteMany : {l, m, n, p : Nat} -> (t : Term (l + m) (n + p)) -> (ty : Ty (n + p)) -> 
+--                  (contextCore : Context m p) -> (contextFull : Context (l + m) (n + p)) ->
+--                  (hasType : HasType contextFull t ty) ->
+--                  (substitutions : Substitutions contextCore) ->
+--                  (tOut : Term l n ** HasType (Context.substituteContext {m} contextFull (fst substitutions)) tOut (Ty.substituteMany (fst substitutions) ty))
+-- substituteMany (TmVar x) ty contextCore contextFull hasType substitutions with (splitSumID x)
+--   substituteMany (TmVar x) ty contextCore contextFull hasType substitutions | (Left (y ** prfEq)) = (TmVar y ** ?bb)
+--   substituteMany (TmVar x) ty contextCore contextFull hasType (tys ** subs) | (Right (y ** prfEq)) = ?substituteMany_rhs_7 (index y subs)
+-- substituteMany (TmAbs x body) ty contextCore contextFull hasType substitutions = ?substituteMany_rhs_1
+-- substituteMany (TmApp x y) ty contextCore contextFull hasType substitutions = ?substituteMany_rhs_2
+-- substituteMany (TmTAbs body) ty contextCore contextFull hasType substitutions = ?substituteMany_rhs_3
+-- substituteMany (TmTApp x y) ty contextCore contextFull hasType substitutions = ?substituteMany_rhs_4
+-- substituteMany (TmPack x y z) ty contextCore contextFull hasType substitutions = ?substituteMany_rhs_5
+-- substituteMany (TmUnpack x y) ty contextCore contextFull hasType substitutions = ?substituteMany_rhs_6
+
 {-
 shiftUp : (c : Fin (S n)) -> Term n -> Term (S n)
 shiftUp c (TmVar k) with (decide c (weaken k) {k=2} {ts=[Fin (S n), Fin (S n)]} {p=FinLTE})
@@ -201,74 +363,25 @@ totalEval term (More fuel) = case oneStep term of
                                   (Just term') => totalEval term' fuel
                                   -}
 
-Sized (HasType context t ty) where
-  size (VarHasType prf) = 1
-  size (AbsHasType bodyHasType) = S (size bodyHasType)
-  size (AppHasType x y) = (size x) + (size y)
-  size (TAbsHasType bodyHasType) = S (size bodyHasType)
-  size (TAppHasType x) = S (size x)
-  size (PackHasType x) = S (size x)
-  size (UnpackHasType x y bodyCanShiftDown) = (size x) + (size y)
 
-nTypes : {n : Nat} -> Context 0 n
-nTypes {n = 0} = emptyContext
-nTypes {n = (S k)} = addTypeBinding nTypes ""
+--substituteMany t ty EmptyContext contextFull hasType ([] ** ()) =
+--  (  rewrite sym $ plusZeroRightNeutral l in
+--     rewrite sym $ plusZeroRightNeutral n in
+--             t
+--  ** rewrite substituteContextNoneNeutral {l} {n} contextFull in
+--     rewrite substituteManyNoneNeutral {m = n} ty in
+--     rewrite sym $ plusZeroRightNeutral l in
+--     rewrite sym $ plusZeroRightNeutral n in
+--             hasType
+--  )
+--substituteMany t ty (AddTerm name tTy tail) contextFull hasType (tys ** substitutions) {m = S m} =
+--  let (sub, subs) = subsTermsAddTerm tys substitutions
+--      (newT  ** newTHasType) = Eval.substituteMany {l = S l} {m} {n} {p} (rewrite plusSuccRightSucc l m in t) ty tail (rewrite plusSuccRightSucc l m in contextFull) (rewrite plusSuccRightSucc l m in hasType) (tys ** subs)
+--      --tt = Eval.substitute last ?tr newT
+--   in ?substituteMany_rhs_3
+--substituteMany t ty (AddType name x) contextFull hasType substitutions = ?substituteMany_rhs_2
 
-BSRBuilder : {n : Nat} -> (Vect n Type) -> (ty : Ty n) -> Type
-BSRBuilder xs (TyVar k) = index k xs
-BSRBuilder xs (TyArr tyIn tyOut) = ((t : Term 0 n ** (IsValue t, HasType nTypes t (TyArr tyIn tyOut))), (BSRBuilder xs tyIn) -> (BSRBuilder xs tyOut))
-BSRBuilder xs (TyAll tyBody) = ((t : Term 0 n ** (IsValue t, HasType nTypes t (TyAll tyBody))), ((t : Type) -> BSRBuilder (t :: xs) tyBody))
-BSRBuilder xs (TySome tyBody) = ((t : Term 0 n ** (IsValue t, HasType nTypes t (TySome tyBody))), (t : Type ** BSRBuilder (t :: xs) tyBody))
-
-BigStepResult: (ty  : Ty 0) -> Type
-BigStepResult ty = BSRBuilder [] ty
-
-getValue : (ty : Ty 0) -> BigStepResult ty -> (t : Term 0 0 ** (IsValue t, HasType Context.emptyContext t ty))
-getValue (TyVar k) _ = absurd k
-getValue (TyArr tyIn tyOut) (val, _) = val
-getValue (TyAll tyBody) (val, _) = val
-getValue (TySome tyBody) (val, _) = val
-
-SubsTerms : {p : Nat} -> Vect p Type -> Context m p -> Type
-SubsTerms tys EmptyContext = ()
-SubsTerms tys (AddTerm name tmTy tail) = (BSRBuilder tys tmTy, SubsTerms tys tail)
-SubsTerms (_ :: tys) (AddType _ tail) = SubsTerms tys tail
-
-Substitutions : {p : Nat} -> Context m p -> Type
-Substitutions con = (Tys p, (types : Vect p Type ** SubsTerms types con))
-
-removeTerms : Context m n -> Context 0 n
-removeTerms EmptyContext = EmptyContext
-removeTerms (AddTerm _ _ context) = removeTerms context
-removeTerms (AddType name context) = AddType name (removeTerms context)
-
-substituteContext : {l, m, n, p : Nat} ->
-                    (contextFull : Context (l + m) (n + p)) ->
-                    (substitutions : Tys p) ->
-                    (Context l n)
-substituteContext {l = 0} {n = 0} contextFull substitutions = EmptyContext
-substituteContext {l = 0} {n = (S n)} (AddTerm _ _ contextFull) substitutions = substituteContext contextFull substitutions
-substituteContext {l = 0} {n = (S n)} (AddType name contextFull) substitutions = AddType name (substituteContext contextFull substitutions)
-substituteContext {l = (S l)} {n = 0} (AddTerm name ty contextFull) substitutions = AddTerm name ?newTy (substituteContext contextFull substitutions)
-substituteContext {l = (S l)} {n = 0} (AddType name contextFull) (_ :: substitutions) = substituteContext contextFull substitutions
-substituteContext {l = (S l)} {n = (S n)} (AddTerm name ty contextFull) substitutions = AddTerm name ?newTyy (substituteContext contextFull substitutions)
-substituteContext {l = (S l)} {n = (S n)} (AddType name contextFull) substitutions = AddType name (substituteContext contextFull substitutions)
-
---substituteContext {l = 0} {n = 0} _ _ = EmptyContext
---substituteContext {l = 0} {n = (S k)} (AddTerm name ty tail) {contextCore = (AddTerm _ _ contextCore)} substitutions = substituteContext tail {contextCore} substitutions
---substituteContext {l = 0} {n = (S k)} (AddTerm name ty tail) {contextCore = (AddType tyNm contextCore)} (sub :: subs) = substituteContext (AddTerm name ty tail) {contextCore=?rhs} subs
---substituteContext {l = 0} {n = (S k)} (AddType name x) substitutions = ?substituteContext_rhs_5
---substituteContext {l = (S l)} {n = n} contextFull substitutions = ?substituteContext_rhs_1
-
-substituteManyTy : {m, n, p : Nat} -> {contextCore : Context m p} ->
-                   (ty : Ty (n + p)) -> (substitutions : Substitutions contextCore) ->
-                   Ty n
-
-substituteMany : {l, m, n, p : Nat} -> (t : Term (l + m) (n + p)) -> (ty : Ty (n + p)) -> 
-                 (contextCore : Context m p) -> (contextFull : Context (l + m) (n + p)) ->
-                 (hasType : HasType contextFull t ty) ->
-                 (substitutions : Substitutions contextCore) ->
-                 (tOut : Term l n ** HasType (Eval.substituteContext {m} contextFull (fst substitutions)) tOut (Eval.substituteManyTy {contextCore} ty substitutions))
+--substitute : (var : Fin n) -> (tReplace : Term n) -> (tBody : Term n) -> Term n
 
 {-
 typeNamesToContext : (types : Vect n Ty) -> (names : Vect n String) -> Context n
