@@ -445,13 +445,15 @@ export
 shiftDownAndSubstituteCommutes : ()
 
 export
-shiftDownCommutes : (varA, varB : Fin (S n)) -> (ty : Ty (S (S n))) -> (canShiftDownB1 : _) -> (canShiftDownA1 : _) -> (canShiftDownA2 : _) -> (canShiftDownB2 : _) -> shiftDown (shiftDown ty (FS varB) canShiftDownB1) varA canShiftDownA1 = shiftDown (shiftDown ty (weaken varA) canShiftDownA2) varB canShiftDownB2
+shiftDownCommutes : (varA, varB : Fin (S n)) -> (ty : Ty (S (S n))) -> (canShiftDownB1 : _) -> (canShiftDownA1 : _) -> (canShiftDownA2 : _) -> (canShiftDownB2 : _) -> shiftDown (shiftDown ty (weaken varA) canShiftDownA2) varB canShiftDownB2 = shiftDown (shiftDown ty (FS varB) canShiftDownB1) varA canShiftDownA1
 
 export
 shiftDownAndSubstituteFirstCommute : (var : Fin (S n)) -> (arg : Ty (S n)) -> (bTy : Ty (S (S n))) ->
                                      (tyCanShiftDown : CanShiftDown var (substituteFirst arg bTy)) -> (argCanShiftDown : CanShiftDown var arg) -> (bTyCanShiftDown : CanShiftDown (FS var) bTy) ->
                                      shiftDown (substituteFirst arg bTy) var tyCanShiftDown = substituteFirst (shiftDown arg var argCanShiftDown) (shiftDown bTy (FS var) bTyCanShiftDown)
-shiftDownAndSubstituteFirstCommute var arg bTy tyCanShiftDown argCanShiftDown bTyCanShiftDown = ?shiftDownAndSubstituteFirstCommute_rhs
+shiftDownAndSubstituteFirstCommute var arg bTy tyCanShiftDown argCanShiftDown bTyCanShiftDown =
+  trans (shiftDownCommutes FZ var (fst (substitute FZ (shiftUp arg 1 FZ) (shiftUpCanShiftDown arg FZ) bTy)) ?csdb1 ?csda1 (snd (substitute FZ (shiftUp arg 1 FZ) (shiftUpCanShiftDown arg FZ) bTy)) tyCanShiftDown)
+        ?shiftDownAndSubstituteFirstCommute_rhs
 
 --shiftDown : (ty : Ty (S n)) -> (c : Fin (S n)) -> CanShiftDown c ty -> Ty n
 --shiftDown (TyVar k) c (VarCanShiftDown k c f) with (decide c k {k=2} {ts=[Fin (S n), Fin (S n)]} {p=FinLTE})
